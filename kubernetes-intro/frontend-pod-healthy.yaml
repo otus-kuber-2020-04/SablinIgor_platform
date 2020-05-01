@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: null
+  labels:
+    run: frontend
+  name: frontend
+spec:
+  containers:
+  - image: soaron/frontend:1.0
+    name: frontend
+    env:
+      - name: PRODUCT_CATALOG_SERVICE_ADDR
+        value: "https://somewhere.example.com"
+      - name: CURRENCY_SERVICE_ADDR
+        value: "https://somewhere.example.com"
+      - name: CART_SERVICE_ADDR
+        value: "https://somewhere.example.com"
+      - name: RECOMMENDATION_SERVICE_ADDR
+        value: "https://somewhere.example.com"
+      - name: CHECKOUT_SERVICE_ADDR
+        value: "https://somewhere.example.com"
+      - name: SHIPPING_SERVICE_ADDR
+        value: "https://somewhere.example.com"
+      - name: AD_SERVICE_ADDR
+        value: "https://somewhere.example.com"
+    resources: {}
+  dnsPolicy: ClusterFirst
+  restartPolicy: Never
+status: {}
