@@ -2,6 +2,7 @@
 
  - [x] Основное ДЗ
  - [x] Задание со *
+ - [x] Задание со **
 
 ## В процессе сделано:
  - запуск pod-а при помощи ReplicaSet
@@ -17,22 +18,36 @@
 
 ## Детальное описание работы
 
+Сервис frontend запускается при помощи контроллера ReplicaSet.
+```
 $ kubectl apply -f frontend-replicaset.yaml
 replicaset.apps/frontend created
+```
 
+Масштибировать кол-во pod-ов можно при помощи команды **kubectl scale**
+```
 $ kubectl scale replicaset frontend --replicas=3
 replicaset.extensions/frontend scaled
+```
 
+Результат масштабирования
+```
 $ kubectl get pods -l app=frontend
 NAME             READY   STATUS    RESTARTS   AGE
 frontend-qc5fs   1/1     Running   0          11s
 frontend-rg44k   1/1     Running   0          11s
 frontend-wlr4q   1/1     Running   0          2m45s
+```
 
+Дополнительную информацию по ReplicaSet-у можно получить командой:
+```
 $ kubectl get rs frontend
 NAME       DESIRED   CURRENT   READY   AGE
 frontend   3         3         3       4m47s
+```
 
+Теперь удаление pod-а приводит к тому, что заместо удаленных pod-ов поднимаются новые:
+```
 $ kubectl delete pods -l app=frontend | kubectl get pods -l app=frontend -w
 NAME             READY   STATUS              RESTARTS   AGE
 frontend-gsxw2   1/1     Running             0          2m14s
@@ -53,16 +68,27 @@ frontend-jlp6l   0/1     ContainerCreating   0          0s
 frontend-x9dxf   1/1     Running             0          2s
 frontend-57wtj   1/1     Running             0          2s
 frontend-jlp6l   1/1     Running             0          2s
+```
 
+Необходимое кол-во реплик можно указать и непосредственно в манифесте:
+```
+spec:
+  replicas: 3
+```
 
+Обратим внимание, что при применении манифеста с измененной версией образа сервиса, фактически pod-ы не пересоздаются и продолжают работать со старой версией:
+```
 kubectl get replicaset frontend -o=jsonpath='{.spec.template.spec.containers[0].image}'
 soaron/frontend:2.0         
 
 kubectl get pods -l app=frontend -o=jsonpath='{.items[0:3].spec.containers[0].image}'
-soaron/frontend:2.0 soaron/frontend:2.0 soaron/frontend:2.0
+soaron/frontend:1.0 soaron/frontend:1.0 soaron/frontend:1.0
+```
 
 Обновление манифеста ReplicaSet не приводит к обновлению pod-ов, так как в задачи  контроллера ReplicaSet не входит проверка соответствия pod-а указанному шаблону, он мониторит кол-во запущенных pod-ов.
 
+Деплой сервиса при помощи объекта Deployment приводит к образования как соответствующего deployment-а так и подчиненного ему replicaset-а.
+```
 $ kubectl get po
 NAME                              READY   STATUS    RESTARTS   AGE
 frontend-9m5fj                    1/1     Running   0          26m
@@ -80,8 +106,11 @@ $ kubectl get rs
 NAME                        DESIRED   CURRENT   READY   AGE
 frontend                    3         3         3       32m
 paymentservice-566547965d   3         3         3       32s
+```
 
 
+Обновление версии сервиса в Deployment уже приводит к пересозданию pod-ов:
+```
 $ kubectl apply -f paymentser
 vice-deployment.yaml | kubectl get pods -l app=paymentservice -w
 NAME                              READY   STATUS    RESTARTS   AGE
@@ -103,26 +132,37 @@ paymentservice-699f9865ff-ksrg6   0/1     Pending             0          0s
 paymentservice-699f9865ff-ksrg6   0/1     ContainerCreating   0          0s
 paymentservice-699f9865ff-ksrg6   1/1     Running             0          4s
 paymentservice-566547965d-267q6   1/1     Terminating         0          4m37s
+```
 
-
-$ kubectl get rsNAME                        DESIRED   CURRENT   READY   AGE
+Обратим внимание, что при этом образуется новый replicaset, старый продолжает существовать, но с нулевыми значениями для кол-ва pod-ов.
+```
+$ kubectl get rs
+NAME                        DESIRED   CURRENT   READY   AGE
 frontend                    3         3         3       39m
 paymentservice-566547965d   0         0         0       7m42s
 paymentservice-699f9865ff   3         3         3       3m15s
+```
 
+Версии сервисов в replicaset-ах:
+```
 $ kubectl get replicaset paymentservice-566547965d -o=jsonpath='{.spec.template.spec.containers[0].image}'
 soaron/paymentservice:0.0.1
 
 $ kubectl get replicaset paymentservice-699f9865ff -o=jsonpath='{.spec.template.spec.containers[0].image}'
 soaron/paymentservice:0.0.2
+```
 
-
+Посмотреть историю deployment-ов можно следующим образом:
+```
 $ kubectl rollout history deployment paymentservice
 deployment.extensions/paymentservice 
 REVISION  CHANGE-CAUSE
 1         <none>
 2         <none>
+```
 
+А вернуться к нужной версии так:
+```
 $ kubectl rollout undo deployment paymentservice --to-revision=1 | kubectl get rs -l app=paymentservice -w
 NAME                        DESIRED   CURRENT   READY   AGE
 paymentservice-566547965d   0         0         0       12m
@@ -149,11 +189,20 @@ paymentservice-566547965d   3         3         3       12m
 paymentservice-699f9865ff   0         1         1       8m9s
 paymentservice-699f9865ff   0         1         1       8m9s
 paymentservice-699f9865ff   0         0         0       8m9s
+```
 
+(*) Рассмотрим несколько вариантов деплоя при помощи опций maxSurge и maxUnavailable.
 
+maxSurge - определяет, скольким экземплярам pod-а позволяется существовать выше требуемого количества реплик, настроенного на развертывании. 
+
+maxUnavailable - определяет, сколько экземпляров pod-а может быть недоступно относительно требуемого количества реплик во время обновления. 
 
 Blue/Grean
 
+Для реализации этой стратегии позволим создавать максимальное кол-во новых pod-ов (maxSurge: 100%) и одновременно ограничим до минимума кол-во недоступных pod-ов (maxUnavailable: 0).
+
+Убедимся в достижении требуемого результата:
+```
 $ kubectl apply -f paymentservice-deployment-bg.yaml | kubectl get pods -l app=paymentservice -w
 NAME                              READY   STATUS    RESTARTS   AGE
 paymentservice-566547965d-qjr6h   1/1     Running   0          5m29s
@@ -174,9 +223,21 @@ paymentservice-699f9865ff-s4m42   1/1     Running             0          3s
 paymentservice-699f9865ff-h4jsd   1/1     Running             0          3s
 paymentservice-566547965d-zc7hs   1/1     Terminating         0          5m32s
 paymentservice-566547965d-tkndh   1/1     Terminating         0          5m32s
+```
 
-Reverse
 
+Reverse Rolling Updat
+
+Требуемое поведение:
+
+1. Удаление одного старого pod
+2. Создание одного нового pod
+3. ...
+
+Для этой стратегии запретим превышать требуемое кол-во pod-ов (maxSurge: 0) и позволим только одному pod-у быть недоступным (maxUnavailable: 1).
+
+Убедимся в достижении требуемого результата:
+```
 $ kubectl apply -f paymentservice-deployment-reverse.yaml | kubectl get pods -l app=paymentservice -w
 NAME                              READY   STATUS    RESTARTS   AGE
 paymentservice-566547965d-77t8h   1/1     Running   0          86s
@@ -197,23 +258,38 @@ paymentservice-699f9865ff-gd92x   0/1     Pending             0          0s
 paymentservice-699f9865ff-gd92x   0/1     Pending             0          0s
 paymentservice-699f9865ff-gd92x   0/1     ContainerCreating   0          0s
 paymentservice-699f9865ff-gd92x   1/1     Running             0          2s
+```
 
+Использование readinessProbe позволяет делать сервис доступным при выполнении указанных условий.
 
+Результат исполнения readinessProbe можно увидеть при выполнении команды **kubectl decsribe po ...**
+```
+...
 Ready:          True
     Restart Count:  0
     Readiness:      http-get http://:8080/_healthz delay=10s timeout=1s period=10s #success=1 #failure=3
+```
 
-
+Если условие readinessProbe не выполняется, то мы видим это как отсутствие pod-а в статусе Ready
+```
 frontend-5bdffb79ff-nf9gv         0/1     Running   0          35s
+```
 
+И явное указание на проблему можно увидеть в описании pod-а
+```
 $ kubectl describe po frontend-5bdffb79ff-nf9gv
 ...
   Warning  Unhealthy  4s (x6 over 54s)  kubelet, kind-worker2  Readiness probe failed: HTTP probe failed with statuscode: 404
+```
 
+Еще одним полезным контроллером является DaemonSet. Он позволяет автоматически разворачивать pod-ы на всех доступных узлах кластера.
 
+(*) Развернем на всех узлах сервис Node exporter для импорта метрик узлов.
 
-https://github.com/coreos/kube-prometheus/blob/master/manifests/
+Манифест представляет собой компиляцию из https://github.com/coreos/kube-prometheus/blob/master/manifests/.
 
+Результат развертывания:
+```
 $ kubectl port-forward node-exporter-cshpr -n monitoring 9100:9100
 Forwarding from 127.0.0.1:9100 -> 9100
 Forwarding from [::1]:9100 -> 9100
@@ -231,7 +307,21 @@ go_gc_duration_seconds{quantile="0.75"} 0
 go_gc_duration_seconds{quantile="1"} 0
 go_gc_duration_seconds_sum 0
 go_gc_duration_seconds_count 0
+```
 
+(**) Обратим внимание, что данный сервис успешно установился и на мастер-узлы, чего обычно для пользовательских pod-ов не происходит.
+
+В данном случае установка на мастер-узлы призошла благодаря спецификации
+```
+      tolerations:
+      - operator: Exists
+```
+
+Использование одного только operator: Exists гарантирует иммнунитет к любым ограничениям, включая NoSchedule у мастер-узлов.
+```
+$ kubectl describe nodes kind-control-plane | grep Taints
+Taints:             node-role.kubernetes.io/master:NoSchedule
+```
 
 # Выполнено ДЗ №1
 
