@@ -1,3 +1,16 @@
+
+(⎈ |minikube:default)➜  canary git:(kubernetes-networks) ✗ for i in $(seq 1 10); do curl -s http://lb-ingress.local/web/index.html | grep 172; sleep 1; done
+172.17.0.8	canary-7ff7869755-kfnph</pre>
+172.17.0.6	production-5f968785b5-j8b6b</pre>
+172.17.0.5	canary-7ff7869755-m56jm</pre>
+172.17.0.6	production-5f968785b5-j8b6b</pre>
+172.17.0.6	canary-7ff7869755-2d79v</pre>
+172.17.0.7	production-5f968785b5-jtkr8</pre>
+172.17.0.5	production-5f968785b5-brjlx</pre>
+172.17.0.7	production-5f968785b5-jtkr8</pre>
+172.17.0.6	production-5f968785b5-j8b6b</pre>
+172.17.0.5	canary-7ff7869755-m56jm</pre>
+
 # Выполнено ДЗ №3
 
  - [x] Основное ДЗ
