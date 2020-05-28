@@ -1,3 +1,114 @@
+# Выполнено Д4 №1
+
+ - [x] Основное ДЗ
+ - [x] Задание со *
+
+## В процессе сделано:
+
+Перейдем сразу к звездам.
+
+Впрочем, на тему "livenessProbe с прверкой запуска процесса" - технически возможно, но на мой взгляд смыста не имеет, так как, обычно, от процесса требуется чуть больше, чем просто его запуск.
+
+### DNS через MetalLB
+
+Для работы DNS на необходимо обеспечить обращение к назначенному адресу по протоколам TCP и UDP. Так как MetalLB не умеет в мультипротоколы, воспользуемся его возможностью делить один IP между несколькими сервисами.
+
+Это достигается при помощи аннотации:
+```
+  annotations:
+    metallb.universe.tf/allow-shared-ip: dns--primary
+```
+
+Если у двух сервисов указывается одиноковый ключ (тут это - dns--primary), то два сервиса получают один и тот же IP.
+```
+kube-system            out-dns-tcp                          LoadBalancer   10.111.145.71   172.17.255.2   53:30069/TCP                 29h
+kube-system            out-dns-udp                          LoadBalancer   10.102.155.94   172.17.255.2   53:30045/UDP                 29h
+```
+
+```
+$ nslookup kubernetes.default.svc.cluster.local 172.17.255.2
+Server:		172.17.255.2
+Address:	172.17.255.2#53
+
+Name:	kubernetes.default.svc.cluster.local
+Address: 10.96.0.1
+```
+
+### Ingress для Dashboard
+
+Так как dashboard-у требуется https, добавим в настройку ingress-а аннотацию:
+```
+nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+```
+
+Дополнительно добавим блок, отвечающий за корректное формирование адресной строки (нам нужно добавлять к /dashboard, то, что будет динамически сформировано при работе с бордой):
+```
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      rewrite ^(/dashboard)$ $1/ permanent;
+      rewrite "(?i)/dashboard(/|$)(.*)" /$2 break;
+```
+
+После чего можем обращаться к dashboard по адресу (не забудем добавить lb-ingress.local в /etc/hosts)
+https://lb-ingress.local/dashboard
+```
+$ curl -kL https://lb-ingress.local/dashboard
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <title>Kubernetes Dashboard</title>
+  <link rel="icon"
+        type="image/png"
+        href="assets/images/kubernetes-logo.png" />
+  <meta name="viewport"
+        content="width=device-width">
+<link rel="stylesheet" href="styles.d8a1833bf9631b49f8ae.css"></head>
+
+<body>
+  <kd-root></kd-root>
+<script src="runtime.a3c2fb5c390e8fb10577.js" defer></script><script src="polyfills-es5.ddf623b9f96429e29863.js" nomodule defer></script><script src="polyfills.24a7a4821c30c3b30717.js" defer></script><script src="scripts.391d299173602e261418.js" defer></script><script src="main.a0d83b15387cfc420c65.js" defer></script></body>
+
+</html>
+```
+
+### Canary для Ingress
+
+Опять же воспользуемся аннотациями, предназначенными именно для распределения потоков трафика.
+```
+    nginx.ingress.kubernetes.io/canary: "true"
+    nginx.ingress.kubernetes.io/canary-weight: "50"
+```
+
+Проверим, таким ли будет распределение:
+```
+$ for i in $(seq 1 10); do curl -s http://lb-ingress.local/web/index.html | grep 172; done
+172.17.0.5	canary-7ff7869755-m56jm</pre>
+172.17.0.6	canary-7ff7869755-2d79v</pre>
+172.17.0.5	production-5f968785b5-brjlx</pre>
+172.17.0.7	production-5f968785b5-jtkr8</pre>
+172.17.0.5	canary-7ff7869755-m56jm</pre>
+172.17.0.8	canary-7ff7869755-kfnph</pre>
+172.17.0.6	production-5f968785b5-j8b6b</pre>
+172.17.0.6	canary-7ff7869755-2d79v</pre>
+172.17.0.8	canary-7ff7869755-kfnph</pre>
+172.17.0.5	production-5f968785b5-brjlx</pre>
+```
+
+В общем - примерно то, что и ожидали. Не забываем, что речь идет о вероятности.
+
+(⎈ |minikube:default)➜  canary git:(kubernetes-networks) ✗ for i in $(seq 1 10); do curl -s http://lb-ingress.local/web/index.html | grep 172; sleep 1; done
+172.17.0.8	canary-7ff7869755-kfnph</pre>
+172.17.0.6	production-5f968785b5-j8b6b</pre>
+172.17.0.5	canary-7ff7869755-m56jm</pre>
+172.17.0.6	production-5f968785b5-j8b6b</pre>
+172.17.0.6	canary-7ff7869755-2d79v</pre>
+172.17.0.7	production-5f968785b5-jtkr8</pre>
+172.17.0.5	production-5f968785b5-brjlx</pre>
+172.17.0.7	production-5f968785b5-jtkr8</pre>
+172.17.0.6	production-5f968785b5-j8b6b</pre>
+172.17.0.5	canary-7ff7869755-m56jm</pre>
+
 # Выполнено ДЗ №3
 
  - [x] Основное ДЗ
