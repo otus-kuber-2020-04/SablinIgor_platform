@@ -1,3 +1,16 @@
+# Выполнено ДЗ №5 
+# Kubernetes templating
+
+ - [x] Основное ДЗ
+
+## В процессе сделано:
+
+ - установка Harbor
+
+ helm repo add harbor https://helm.goharbor.io
+
+ helm install --name harbor harbor/harbor -f kubernetes-templating/harbor/value.yaml
+
 # Выполнено ДЗ №5
 
  - [x] Основное ДЗ

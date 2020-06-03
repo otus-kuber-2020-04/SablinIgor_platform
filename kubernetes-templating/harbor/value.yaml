@@ -25,18 +25,17 @@ expose:
     commonName: ""
   ingress:
     hosts:
-      core: core.harbor.domain
-      notary: notary.harbor.domain
+      core: harbor.35.202.248.131.nip.io
+      #notary: notary.harbor.domain
     # set to the type of ingress controller if it has specific requirements.
     # leave as `default` for most ingress controllers.
     # set to `gce` if using the GCE ingress controller
     # set to `ncp` if using the NCP (NSX-T Container Plugin) ingress controller
     controller: default
     annotations:
-      ingress.kubernetes.io/ssl-redirect: "true"
-      ingress.kubernetes.io/proxy-body-size: "0"
-      nginx.ingress.kubernetes.io/ssl-redirect: "true"
-      nginx.ingress.kubernetes.io/proxy-body-size: "0"
+      kubernetes.io/ingress.class: nginx
+      kubernetes.io/tls-acme: "true"
+      cert-manager.io/cluster-issuer: "letsencrypt-prod"
   clusterIP:
     # The name of ClusterIP service
     name: harbor
@@ -95,7 +94,7 @@ expose:
 # the IP address of k8s node 
 # 
 # If Harbor is deployed behind the proxy, set it as the URL of proxy
-externalURL: https://core.harbor.domain
+externalURL: https://harbor.35.202.248.131.nip.io
 
 # The persistence is enabled by default and a default StorageClass
 # is needed in the k8s cluster to provision volumes dynamicly. 
@@ -105,7 +104,7 @@ externalURL: https://core.harbor.domain
 # For storing images and charts, you can also use "azure", "gcs", "s3", 
 # "swift" or "oss". Set it in the "imageChartStorage" section
 persistence:
-  enabled: true
+  enabled: false
   # Setting it to "keep" to avoid removing PVCs during a helm delete 
   # operation. Leaving it empty will delete PVCs after the chart deleted
   resourcePolicy: "keep"
@@ -343,7 +342,7 @@ registry:
   secret: ""
 
 chartmuseum:
-  enabled: true
+  enabled: false
   image:
     repository: goharbor/chartmuseum-photon
     tag: v0.9.0-v1.8.2
@@ -359,7 +358,7 @@ chartmuseum:
   podAnnotations: {}
 
 clair:
-  enabled: true
+  enabled: false
   image:
     repository: goharbor/clair-photon
     tag: v2.0.8-v1.8.2
@@ -381,7 +380,7 @@ clair:
   podAnnotations: {}
 
 notary:
-  enabled: true
+  enabled: false
   server:
     image:
       repository: goharbor/notary-server-photon
