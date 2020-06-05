@@ -5,11 +5,101 @@
 
 ## В процессе сделано:
 
+ - установлен Helm 3
+
+ Непосредственно установка
+ ```
+ wget https://get.helm.sh/helm-v3.2.2-linux-amd64.tar.gz
+ tar -zxvf helm-v3.2.2-linux-amd64.tar.gz
+ mv linux-amd64/helm /usr/local/bin/helm
+ ```
+
+ Добавление репозитория
+ ```
+ helm repo add stable https://kubernetes-charts.storage.googleapis.com/
+ helm search repo stable
+ ```
+ 
+ - Установлен cert-manager
+
+ ```
+ kubectl create namespace cert-manager
+ helm install cert-manager jetstack/cert-manager --namespace cert-manager --version v0.15.1 --set installCRDs=true
+ ```
+
+ Так как сертфикат кто-то должен подписать, дополнительно необходимо настоить соответствующий Issuer (в данном случае это Letsencrypt)
+ ```
+ kubectl apply -f kubernetes-templating/cert-manager/prod_issuer.yaml
+ ```
+
+ - Chartmuseum
+
+ ```
+ kubectl create ns chartmuseum
+ helm upgrade --install chartmuseum stable/chartmuseum --wait --namespace=chartmuseum -f kubernetes-templating/chartmuseum/values.yaml
+ ```
+
+ Дополнительно в values.yaml необходимо установить пераметр
+ ```
+ env:
+  open:
+    DISABLE_API: false
+ ```
+
+ Если этого не сделать - обращение к API будет невозможным.
+
+ Загрузка Chart-а
+ ```
+ cd hipster-shop
+ helm package .
+ curl --data-binary "@hipster-shop-0.1.0.tgz" https://chartmuseum.35.202.248.131.nip.io/api/charts
+ ```
+
+ Так как "из коробки" мы, фактически, получаем только REST-интерфейс, то при желании воспользоваться web-интерфейсом, потребуется стороннее решение. Например, https://github.com/chartmuseum/ui - позволяющий просматривать и даже загружать чарты через web-интерфейс.
+
  - установка Harbor
 
+ ```
  helm repo add harbor https://helm.goharbor.io
-
  helm install --name harbor harbor/harbor -f kubernetes-templating/harbor/value.yaml
+ ```
+
+ - kubecfg
+
+ Установка в MacOs
+ ```
+ brew install kubecfg
+ ```
+
+ - kustomize
+
+ Установка в MacOs
+ ```
+ brew install kustomize
+ ```
+
+ Возможная структура каталогов, позволяющая разделить описания по средам установки
+ ```
+|
+|-Some app
+| |-base
+| | |-kustomization.yaml
+| | |-app-deployment.yaml
+| | |-app-service.yaml
+| |
+| |-overrides
+|    |-stage
+|    | |-kustomization.yaml
+|    |
+|    |-prod
+|      |-kustomization.yaml
+|
+ ```
+
+Просмотр "рендеринга" манифестов
+```
+kustomize build overrides/hipster-shop/
+```
 
 # Выполнено ДЗ №5
 
