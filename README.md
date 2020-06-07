@@ -1,6 +1,51 @@
+# Выполнено ДЗ №7
+# Kubernetes Operator
+
+ - [x] Основное ДЗ
+
+## В процессе сделано:
+
+- Определен CustomResourceDefinition
+
+Для указания обязательности поля используется конструкция вида
+```
+      required:
+        - apiVersion
+        - kind
+        - metadata
+```
+
+Собственно валидация полей проводится при помощи блока validation
+```
+  validation:
+    openAPIV3Schema:
+      type: object
+      properties:
+        apiVersion:
+          type: string
+  ...
+```
+
+- развернута база mysql при помощи оператора
+
+- отработали job-ы восстановления и backup-а
+```
+backup-mysql-instance-job    1/1           2s         3m14s
+restore-mysql-instance-job   1/1           5m40s      8m47s
+```
+
+- после пересоздания базы (удаление и последующий повторое создание ресурса) содержимое таблиц не пострадало
+```
++----+-------------+
+| id | name        |
++----+-------------+
+|  1 | some data   |
+|  2 | some data-2 |
++----+-------------+
+```
+
 # Выполнено ДЗ №6 
 # Kubernetes templating
-
  - [x] Основное ДЗ
 
 ## В процессе сделано:
@@ -99,6 +144,43 @@
 Просмотр "рендеринга" манифестов
 ```
 kustomize build overrides/hipster-shop/
+- Определен CustomResourceDefinition
+
+Для указания обязательности поля используется конструкция вида
+```
+      required:
+        - apiVersion
+        - kind
+        - metadata
+```
+
+Собственно валидация полей проводится при помощи блока validation
+```
+  validation:
+    openAPIV3Schema:
+      type: object
+      properties:
+        apiVersion:
+          type: string
+  ...
+```
+
+- развернута база mysql при помощи оператора
+
+- отработали job-ы восстановления и backup-а
+```
+backup-mysql-instance-job    1/1           2s         3m14s
+restore-mysql-instance-job   1/1           5m40s      8m47s
+```
+
+- после пересоздания базы (удаление и последующий повторое создание ресурса) содержимое таблиц не пострадало
+```
++----+-------------+
+| id | name        |
++----+-------------+
+|  1 | some data   |
+|  2 | some data-2 |
++----+-------------+
 ```
 
 # Выполнено ДЗ №5
