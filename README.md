@@ -1,4 +1,56 @@
 # Выполнено ДЗ №7
+# Kubernetes Logging
+
+ - [x] Основное ДЗ
+
+## В процессе сделано:
+
+### Prepare cluster
+
+gcloud container clusters get-credentials otus --zone us-central1-c --project sharp-haven-274816
+
+kubectl taint nodes gke-otus-infra-pool-c1cf63a8-9srl node-role=infra:NoSchedule
+kubectl taint nodes gke-otus-infra-pool-c1cf63a8-lzk0 node-role=infra:NoSchedule
+kubectl taint nodes gke-otus-infra-pool-c1cf63a8-r3k1 node-role=infra:NoSchedule
+
+### Create namespaces
+
+kubectl create ns microservices-demo
+kubectl create ns observability
+kubectl create ns nginx-ingress
+
+### Demo app install
+
+kubectl apply -f https://raw.githubusercontent.com/express42/otus-platform-snippets/master/Module-02/Logging/microservices-demo-without-resources.yaml -n microservices-demo
+
+### Nginx controller install
+
+helm upgrade --install nginx-ingress stable/nginx-ingress --wait --namespace=nginx-ingress -f nginx-ingress.values.yaml
+
+kubectl get svc -n nginx-ingress
+
+curl 35.188.170.169 // check default ingress backend
+
+### Prometheus operator
+
+helm upgrade --install prometheus-operator stable/prometheus-operator --namespace observability -f prometheus-operator.values.yaml
+
+### ELK stack
+
+helm upgrade --install elasticsearch elastic/elasticsearch --namespace observability -f elasticsearch.values.yaml
+
+helm upgrade --install kibana elastic/kibana --namespace observability -f kibana.values.yaml
+
+helm upgrade --install fluent-bit stable/fluent-bit --namespace observability -f fluent-bit.values.yaml
+
+### Loki Stack
+
+helm repo add loki https://grafana.github.io/loki/charts
+helm repo update
+
+helm upgrade --install loki loki/loki-stack --namespace observability -f loki.values.yaml
+
+# Выполнено ДЗ №7
 # Kubernetes Operator
 
  - [x] Основное ДЗ

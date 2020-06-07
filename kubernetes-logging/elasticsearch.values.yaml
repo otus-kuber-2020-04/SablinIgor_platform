@@ -1,0 +1,11 @@
+tolerations:
+  - key: node-role
+    operator: Equal
+    value: infra
+    effect: NoSchedule
+
+replicas: 1
+minimumMasterNodes: 1
+
+nodeSelector:
+  cloud.google.com/gke-nodepool: infra-pool
