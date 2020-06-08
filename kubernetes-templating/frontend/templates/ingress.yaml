@@ -1,0 +1,15 @@
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: shop-ingress
+  annotations:
+    ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+  - host: shop.35.202.248.131.nip.io
+    http:
+      paths:
+        - path: /
+          backend:
+            serviceName: frontend
+            servicePort: 80
