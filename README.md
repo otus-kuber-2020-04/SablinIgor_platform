@@ -1,3 +1,33 @@
+
+# Выполнено ДЗ №8
+# Kubernetes Monitiring
+
+ - [x] Основное ДЗ
+
+## В процессе сделано:
+
+Установлен Nginx
+```
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm repo update
+helm pull bitnami/nginx --untar
+
+helm upgrade --install nginx nginx
+```
+
+**Пояснения по values.yaml**
+
+В стандартные настройки внесены следующие изменения:
+- в блоке ingress указано имя хоста (hostname)
+- включен сервис-мониторинг для прометея (serviceMonitor.enabled)
+
+### Дополнительные материалы
+
+Дашборд для Nginx: kubernetes-monitoring/dashboard.json
+
+Скриншот дашборда
+![Image of dashboard](kubernetes-monitoring/dashboard.png)
+
 # Выполнено ДЗ №7
 # Kubernetes Operator
 
