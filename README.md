@@ -26,7 +26,7 @@ helm upgrade --install nginx nginx
 Дашборд для Nginx: kubernetes-monitoring/dashboard.json
 
 Скриншот дашборда
-![Image of dashboard](kubernetes-monitoring/dashboard.png)
+![Image of dashboard](https://pasteboard.co/Jc7VS7P.jpg)
 
 # Выполнено ДЗ №7
 # Kubernetes Operator
