@@ -1,6 +1,5 @@
-
-# Выполнено ДЗ №8
-# Kubernetes Monitiring
+# Выполнено ДЗ №9
+# Kubernetes Logging
 
  - [x] Основное ДЗ
 
@@ -8,14 +7,153 @@
 
 Установлен Nginx
 ```
-helm repo add bitnami https://charts.bitnami.com/bitnami
 helm repo update
 helm pull bitnami/nginx --untar
 
 helm upgrade --install nginx nginx
+=======
+### Prepare cluster
+
+
+Обновляем конфигурацию для kubectl
+```
+gcloud container clusters get-credentials otus --zone us-central1-c --project sharp-haven-274816
+```
+
+Помечаем ноды infra-pool как недоступные для деплоя подов по-умолчанию.
+```
+kubectl taint nodes gke-otus-infra-pool-c1cf63a8-9srl node-role=infra:NoSchedule
+kubectl taint nodes gke-otus-infra-pool-c1cf63a8-lzk0 node-role=infra:NoSchedule
+kubectl taint nodes gke-otus-infra-pool-c1cf63a8-r3k1 node-role=infra:NoSchedule
+```
+
+### Create namespaces
+
+Сооздаем несколько namespace-ов для развертывания демо-приложения, инфраструктуры для логирования/мониторинга и nginx-ingress-а.
+```
+kubectl create ns microservices-demo
+kubectl create ns observability
+kubectl create ns nginx-ingress
+```
+
+### Demo app install
+
+Устанавливаем демо-приложение
+```
+kubectl apply -f https://raw.githubusercontent.com/express42/otus-platform-snippets/master/Module-02/Logging/microservices-demo-without-resources.yaml -n microservices-demo
+```
+
+### Nginx controller install
+
+Стамим nginx-ingress
+```
+helm upgrade --install nginx-ingress stable/nginx-ingress --wait --namespace=nginx-ingress -f nginx-ingress.values.yaml
+```
+
+Промеряем доступность дефолтного backend-а 
+```
+kubectl get svc -n nginx-ingress 
+
+curl 35.188.170.169
 ```
 
 **Пояснения по values.yaml**
+
+В переменной config указываем желательный формат логирования - json, и набор полей, который мы хотим сохранять в логе (переменные log-format-escape-json и log-format-upstream, соответственно).
+
+Определяем ноды, на которые мы желаем установить контроллер - переменные tolerations и nodeSelector.
+
+При помощи переменной affinity избегаем установки нескольких контроллеров (если мы захотим иметь их больше одного - replicaCount) на одну ноду.
+
+В блоке metrics включаем сбор метрик с любых namespace-ов, где есть ingress-ы (переменная namespaceSelector).
+
+### Prometheus operator
+
+Устанавливаем стек, включающий в себя Prometheus, Grafana (и еще много интересного).
+```
+helm upgrade --install prometheus-operator stable/prometheus-operator --namespace observability -f prometheus-operator.values.yaml
+```
+
+**Пояснения по values.yaml**
+
+Определяем ноды, на которые мы желаем установить компоненты стека - переменные tolerations и nodeSelector.
+
+В соответствующих (alertmanager, grafana, prometheus) блоках определяем igress-ресурсы.
+
+В блоке grafana дополнительно определяем:
+- наличие дефолтных дашбордов: defaultDashboardsEnabled
+- пароль администратора: adminPassword
+- Datasouce для Loki: additionalDataSources. Дополнительно следуем помнить, что определенные тут datasouce-ы нельзя изменять через UI графаны.
+
+В блоке grafana дополнительно определяем в переменной prometheusSpec настройки работы с service monitor-ами, а именно - при помощи serviceMonitorSelectorNilUsesHelmValues отключаем проверку на наличие "...labeled with the same release tag as the prometheus-operator release", и так же указываем на необходимость искать любые мониторы (serviceMonitorSelector) во всех namespace-ах (serviceMonitorNamespaceSelector). 
+
+### ELK stack
+
+Устанавливаем ELK stack при помощи нескольких чартов.
+```
+helm upgrade --install elasticsearch elastic/elasticsearch --namespace observability -f elasticsearch.values.yaml
+
+helm upgrade --install kibana elastic/kibana --namespace observability -f kibana.values.yaml
+
+helm upgrade --install fluent-bit stable/fluent-bit --namespace observability -f fluent-bit.values.yaml
+
+helm upgrade --install elasticsearch-exporter stable/elasticsearch-exporter --setes.uri=http://elasticsearch-master:9200 --set serviceMonitor.enabled=true --namespace=observability
+```
+
+**Пояснения по values.yaml каждого чарта**
+
+**Elasticsearch**
+
+Для экономии ресурсов тестового кластера указываем, что хотим развернуть только один мастер - переменные replicas и minimumMasterNodes.
+
+Определяем ноды, на которые мы желаем провести установку - переменные tolerations и nodeSelector.
+
+**Kibana**
+
+Определяем ноды, на которые мы желаем провести установку - переменные tolerations и nodeSelector.
+
+В переменной ingress определяем соответствующий ingress-ресурс.
+
+**Fluent-bit**
+
+Так как мы хотим собирать логи со всех нод, то определяем переменную tolerations.
+
+В блоке backend указываем, что в качестве бэкенда мы используем Elasticsearch и для хоста определяем имя сервиса эластика.
+
+В блоке rawConfig решаем проблему с дублированием полей time и timestamp путем их удаления. Другие варианты решения проблемы - это, к примеру, переименование полей или добавление к именам полей какого-нибудь дополнительного префикса (mergeLogKey).
+
+### Loki Stack
+
+Устанавливаем из чартов собственно Loki и Promtail
+```
+helm repo add loki https://grafana.github.io/loki/charts
+helm repo update
+
+helm upgrade --install loki loki/loki-stack --namespace observability -f loki.values.yaml
+```
+
+В блоке promtail указываем толлерантность к чему угодно - опять же для того, чтобы собирать информацию со всех узлов, даже с тех, где есть метки NoSchedule.
+
+Все остальные приседания выполняем в соответствии с описанием ДЗ.
+
+Дополнительные файлы:
+- export.ndjson - дашборд ElasticSearch
+- nginx-ingress.json - дашборд Grafana
+
+### Использованные источники
+
+- https://grafana.com/grafana/dashboards/4358
+- https://medium.com/zolo-engineering/configuring-prometheus-operator-helm-chart-with-aws-eks-part-2-monitoring-of-external-services-342e352d85f0
+- https://fluentbit.io/documentation/0.13/filter/modify.html
+- https://tjth.co/reindexing-data-in-elasticsearch-changing-field-type/
+
+
+# Выполнено ДЗ №8
+# Kubernetes Monitiring
+
+ - [x] Основное ДЗ
+
+## В процессе сделано:
 
 В стандартные настройки внесены следующие изменения:
 - в блоке ingress указано имя хоста (hostname)
@@ -27,6 +165,8 @@ helm upgrade --install nginx nginx
 
 Скриншот дашборда
 ![Image of dashboard](https://pasteboard.co/Jc7VS7P.jpg)
+
+
 
 # Выполнено ДЗ №7
 # Kubernetes Operator

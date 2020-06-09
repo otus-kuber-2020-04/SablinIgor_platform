@@ -1,0 +1,7 @@
+loki:
+  enabled: true
+
+promtail:
+  enabled: true
+  tolerations:
+  - operator: "Exists"
