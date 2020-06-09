@@ -5,9 +5,15 @@
 
 ## В процессе сделано:
 
+Установлен Nginx
+```
+helm repo update
+helm pull bitnami/nginx --untar
+
+helm upgrade --install nginx nginx
+=======
 ### Prepare cluster
 
-Кластер разворачиваем в GKE. Поднимаем две группы рабочих нод - default и infra-pool. В последний будем ставить ресурсоемкие приложения типа ElasrticSearch.
 
 Обновляем конфигурацию для kubectl
 ```
@@ -126,8 +132,6 @@ helm repo update
 helm upgrade --install loki loki/loki-stack --namespace observability -f loki.values.yaml
 ```
 
-**Пояснения по values.yaml**
-
 В блоке promtail указываем толлерантность к чему угодно - опять же для того, чтобы собирать информацию со всех узлов, даже с тех, где есть метки NoSchedule.
 
 Все остальные приседания выполняем в соответствии с описанием ДЗ.
@@ -142,6 +146,27 @@ helm upgrade --install loki loki/loki-stack --namespace observability -f loki.va
 - https://medium.com/zolo-engineering/configuring-prometheus-operator-helm-chart-with-aws-eks-part-2-monitoring-of-external-services-342e352d85f0
 - https://fluentbit.io/documentation/0.13/filter/modify.html
 - https://tjth.co/reindexing-data-in-elasticsearch-changing-field-type/
+
+
+# Выполнено ДЗ №8
+# Kubernetes Monitiring
+
+ - [x] Основное ДЗ
+
+## В процессе сделано:
+
+В стандартные настройки внесены следующие изменения:
+- в блоке ingress указано имя хоста (hostname)
+- включен сервис-мониторинг для прометея (serviceMonitor.enabled)
+
+### Дополнительные материалы
+
+Дашборд для Nginx: kubernetes-monitoring/dashboard.json
+
+Скриншот дашборда
+![Image of dashboard](https://pasteboard.co/Jc7VS7P.jpg)
+
+
 
 # Выполнено ДЗ №7
 # Kubernetes Operator
