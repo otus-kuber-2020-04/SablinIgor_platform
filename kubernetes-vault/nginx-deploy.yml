@@ -1,0 +1,58 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: service-nginx
+  labels:
+    app: nginx
+spec:
+  selector:
+    app: nginx
+  ports:
+    - port: 80
+      targetPort: 80
+  type: NodePort
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  labels:
+    app: nginx
+spec:
+  replicas: 1
+  template:
+    metadata:
+      name: nginx
+      labels:
+        app: nginx
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/agent-inject-status: "update"
+        vault.hashicorp.com/role: "otus"
+        vault.hashicorp.com/agent-inject-secret-index.html: "otus/otus-ro/config"
+        vault.hashicorp.com/secret-volume-path: /usr/share/nginx/html
+        vault.hashicorp.com/agent-inject-template-index.html: |
+          <html>
+          <body>
+          <p>Some secrets:</p>
+          {{- with secret "otus/otus-ro/config" -}}
+          <ul>
+              <li><pre>username: {{ .Data.username }}</pre></li>
+              <li><pre>password: {{ .Data.password }}</pre></li>
+          </ul>
+          {{- end }}
+          </body>
+          </html>
+    spec:
+      containers:
+        - name: nginx
+          image: nginx
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+      serviceAccountName: vault-auth
+      restartPolicy: Always
+  selector:
+    matchLabels:
+      app: nginx
