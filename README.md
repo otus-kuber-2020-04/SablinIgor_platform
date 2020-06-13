@@ -1,6 +1,10 @@
 # Выполнено ДЗ №10
 # Kubernetes Hashicorp Vault
 
+ - [x] Основное ДЗ
+
+## В процессе сделано:
+
 **Установка консула**
 ```
 git clone https://github.com/hashicorp/consul-helm.git
