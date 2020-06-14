@@ -1,19 +1,783 @@
+# Выполнено ДЗ №10
+# Kubernetes Hashicorp Vault
+
+ - [x] Основное ДЗ
+
+## В процессе сделано:
+
+**Установка консула**
+```
+git clone https://github.com/hashicorp/consul-helm.git
+helm install consul consul-helm
+```
+
+**Установка Vault**
+```
+git clone https://github.com/hashicorp/vault-helm.git
+```
+
+```
+server:
+  standalone:
+    enabled: false
+
+  ha:
+    enabled: true
+
+ui:
+  enabled: true
+```
+
+```
+helm install vault vault-helm
+helm status vault
+NAME: vault
+LAST DEPLOYED: Thu Jun 11 17:01:44 2020
+NAMESPACE: default
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+Thank you for installing HashiCorp Vault!
+
+Now that you have deployed Vault, you should look over the docs on using
+Vault with Kubernetes available here:
+
+https://www.vaultproject.io/docs/
+
+
+Your release is named vault. To learn more about the release, try:
+
+  $ helm status vault
+  $ helm get vault
+
+kubectl get po -l app.kubernetes.io/instance=vault
+NAME                                    READY   STATUS    RESTARTS   AGE
+vault-0                                 0/1     Running   0          3m42s
+vault-1                                 0/1     Running   0          3m42s
+vault-2                                 0/1     Running   0          3m42s
+vault-agent-injector-7898f4df86-stgg4   1/1     Running   0          3m42s
+```
+
+Поды с хранилищем не перешли в состоянии Running, так как мы еще не распечатали хранилище.
+
+**Инициализация Vault**
+```
+kubectl exec -it vault-0 -- vault operator init --key-shares=1 --key-threshold=1
+Unseal Key 1: 3z376mdMD29cIKst92keOLDA6Bhul3xP65UNoyQjTC8=
+
+Initial Root Token: s.JdZAKyBiGeWcvjKODIf9IbrX
+```
+
+--key-shares - отвечает за общее кол-во ключей
+--key-threshold - определяет сколько их них необходимо для распечатывания хранилища
+
+Состояние отдельного хранилища можно посмотреть командой
+```
+kubectl exec -it vault-0 -- vault status
+Key                Value
+---                -----
+Seal Type          shamir
+Initialized        true
+Sealed             true
+Total Shares       1
+Threshold          1
+Unseal Progress    0/1
+Unseal Nonce       n/a
+Version            1.4.2
+HA Enabled         true
+```
+
+**Распечатывание хранилище (используем ключ, полученный ранее - Unseal Key)**
+```
+kubectl exec -it vault-0 -- vault operator unseal '3z376mdMD29cIKst92keOLDA6Bhul3xP65UNoyQjTC8='
+kubectl exec -it vault-1 -- vault operator unseal '3z376mdMD29cIKst92keOLDA6Bhul3xP65UNoyQjTC8='
+kubectl exec -it vault-2 -- vault operator unseal '3z376mdMD29cIKst92keOLDA6Bhul3xP65UNoyQjTC8='
+```
+
+Обратим внимание, что в статусе хранилища изменилось состояние поля Sealed
+```
+kubectl exec -it vault-0 -- vault status
+Key             Value
+---             -----
+Seal Type       shamir
+Initialized     true
+Sealed          false
+Total Shares    1
+Threshold       1
+Version         1.4.2
+Cluster Name    vault-cluster-bea4d1af
+Cluster ID      0b4fb285-09ed-3c8c-279e-7996650eee4e
+HA Enabled      true
+HA Cluster      https://vault-0.vault-internal:8201
+HA Mode         active
+```
+
+**Логин в Vault (используем токен, полученный ранее - Initial Root Token)**
+```
+kubectl exec -it vault-0 -- vault login
+Token (will be hidden):
+Success! You are now authenticated. The token information displayed below
+is already stored in the token helper. You do NOT need to run "vault login"
+again. Future Vault requests will automatically use this token.
+
+Key                  Value
+---                  -----
+token                s.JdZAKyBiGeWcvjKODIf9IbrX
+token_accessor       1yRsgNedcvnzTZQd7BeOTrtX
+token_duration       ∞
+token_renewable      false
+token_policies       ["root"]
+identity_policies    []
+policies             ["root"]
+```
+
+Список текущих авторизации можно посмотеть командой
+```
+kubectl exec -it vault-0 -- vault auth list
+Path      Type     Accessor               Description
+----      ----     --------               -----------
+token/    token    auth_token_84670741    token based credentials
+```
+
+**Работа с секретами**
+
+Подготовим хранение секрета вида key/value c именем otus
+```
+kubectl exec -it vault-0 -- vault secrets enable --path=otus kv
+Success! Enabled the kv secrets engine at: otus/
+```
+
+Посмотрим на общий список секретов, который у нас есть к этому времени
+```
+kubectl exec -it vault-0 -- vault secrets list --detailed
+Path          Plugin       Accessor              Default TTL    Max TTL    Force No Cache    Replication    Seal Wrap    External Entropy Access    Options    Description                                                UUID
+----          ------       --------              -----------    -------    --------------    -----------    ---------    -----------------------    -------    -----------                                                ----
+cubbyhole/    cubbyhole    cubbyhole_e409aaf3    n/a            n/a        false             local          false        false                      map[]      per-token private secret storage                           d4cc849f-ec14-6d64-fa28-4c7fa0d2e7ea
+identity/     identity     identity_32ba8418     system         system     false             replicated     false        false                      map[]      identity store                                             465b8010-da2c-a798-ebfa-affa4754dbe3
+otus/         kv           kv_b57f45fa           system         system     false             replicated     false        false                      map[]      n/a                                                        59d84039-61a8-6916-baa7-7a3fba829d62
+sys/          system       system_813dd989       n/a            n/a        false             replicated     false        false                      map[]      system endpoints used for control, policy and debugging    3eada08b-67fd-1d31-9e5a-2fa4486a4193
+```
+
+Добавим пару секретов в otus
+```
+kubectl exec -it vault-0 -- vault kv put otus/otus-ro/config username='otus-ro' password='asajkjkahs'
+kubectl exec -it vault-0 -- vault kv put otus/otus-rw/config username='otus-rw' password='asajkjkahs'
+```
+
+Прочитаем значения секретов парой способов
+```
+kubectl exec -it vault-0 -- vault read otus/otus-ro/config
+Key                 Value
+---                 -----
+refresh_interval    768h
+password            asajkjkahs
+username            otus-ro
+
+kubectl exec -it vault-0 -- vault read otus/otus-rw/config
+Key                 Value
+---                 -----
+refresh_interval    768h
+password            asajkjkahs
+username            otus-rw
+
+kubectl exec -it vault-0 -- vault kv get otus/otus-rw/config
+====== Data ======
+Key         Value
+---         -----
+password    asajkjkahs
+username    otus-rw
+
+kubectl exec -it vault-0 -- vault kv get otus/otus-ro/config
+====== Data ======
+Key         Value
+---         -----
+password    asajkjkahs
+username    otus-ro
+```
+
+**Авторизация через K8S**
+```
+kubectl exec -it vault-0 -- vault auth enable kubernetes
+kubectl exec -it vault-0 -- vault auth list
+Path           Type          Accessor                    Description
+----           ----          --------                    -----------
+kubernetes/    kubernetes    auth_kubernetes_da54bbd9    n/a
+token/         token         auth_token_84670741         token based credentials
+```
+
+Создадим сервисный акаунт для Vault-а
+```
+kubectl create serviceaccount vault-auth
+```
+
+И свяжем его с ролью 
+```
+tee vault-auth-service-account.yml <<EOF 
+---
+apiVersion: rbac.authorization.k8s.io/v1beta1 
+kind: ClusterRoleBinding
+metadata:
+  name: role-tokenreview-binding
+  namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io 
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+- kind: ServiceAccount
+  name: vault-auth
+  namespace: default
+EOF
+
+kubectl apply --filename vault-auth-service-account.yml
+```
+
+Подготовим переменные окружения. Они нам пригодятся.
+(!)Обратим внимание, что в последнем случае используется gsed - ибо OS X.
+```
+export VAULT_SA_NAME=$(kubectl get sa vault-auth -o jsonpath="{.secrets[*]['name']}")
+export SA_JWT_TOKEN=$(kubectl get secret $VAULT_SA_NAME -o jsonpath="{.data.token}" | base64 --decode; echo)
+export SA_CA_CRT=$(kubectl get secret $VAULT_SA_NAME -o jsonpath="{.data['ca\.crt']}" | base64 --decode; echo)
+export K8S_HOST=$(kubectl cluster-info | grep 'Kubernetes master' | awk '/https/ {print $NF}' | gsed 's/\x1b\[[0-9;]*m//g' )
+```
+
+Загрузим конфиг авторизации в Vault
+```
+kubectl exec -it vault-0 -- vault write auth/kubernetes/config \ token_reviewer_jwt="$SA_JWT_TOKEN" \
+kubernetes_host="$K8S_HOST" \
+kubernetes_ca_cert="$SA_CA_CRT"
+Success! Data written to: auth/kubernetes/config
+```
+
+Создадим политики, определяющие доступ к секретам
+```
+tee otus-policy.hcl <<EOF 
+path "otus/otus-ro/*" {
+    capabilities = ["read", "list"] 
+}
+
+path "otus/otus-rw/*" {
+    capabilities = ["read", "create", "list"]
+} 
+EOF
+```
+
+Загрузим политики в хранилище и свяжем их с ролью
+```
+kubectl cp otus-policy.hcl vault-0:./tmp
+
+kubectl exec -it vault-0 -- vault policy write otus-policy /tmp/otus-policy.hcl
+
+kubectl exec -it vault-0 -- vault write auth/kubernetes/role/otus bound_service_account_names=vault-auth bound_service_account_namespaces=default policies=otus-policy ttl=24h
+```
+
+Убедимся, что авторизация через K8S работает - создадим под, привязанный с сервисной учетке, которую мы создали ранее и посмотрим будет ли у нас доступ к секретам
+```
+kubectl run tmp --image=alpine:3.7 --restart=Never --rm -i --tty
+
+apk add curl jq
+VAULT_ADDR=http://vault:8200
+KUBE_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+curl --request POST --data '{"jwt": "'$KUBE_TOKEN'", "role": "otus"}' $VAULT_ADDR/v1/auth/kubernetes/login | jq
+TOKEN=$(curl -k -s --request POST --data '{"jwt": "'$KUBE_TOKEN'", "role": "test"}' $VAULT_ADDR/v1/auth/kubernetes/login | jq '.auth.client_token' | awk -F\" '{print $2}')
+```
+
+С полученным токеном обратимся к секретам.
+Прочитаем их.
+```
+curl --silent --header "X-Vault-Token:s.UjQxw8hPEIpM18RI3Fg3sD5X" $VAULT_ADDR/v1/otus/otus-ro/config | jq
+{
+  "request_id": "e0426934-dbc7-2391-7d20-b5c3ab63e1d1",
+  "lease_id": "",
+  "renewable": false,
+  "lease_duration": 2764800,
+  "data": {
+    "password": "asajkjkahs",
+    "username": "otus-ro"
+  },
+  "wrap_info": null,
+  "warnings": null,
+  "auth": null
+}
+
+curl --silent --header "X-Vault-Token:s.UjQxw8hPEIpM18RI3Fg3sD5X" $VAULT_ADDR/v1/otus/otus-rw/config | jq
+{
+  "request_id": "74df9031-2d2c-3966-a7e7-b6ccac769fb0",
+  "lease_id": "",
+  "renewable": false,
+  "lease_duration": 2764800,
+  "data": {
+    "password": "asajkjkahs",
+    "username": "otus-rw"
+  },
+  "wrap_info": null,
+  "warnings": null,
+  "auth": null
+}
+```
+
+И попробуем изменить, используя otus-rw
+```
+curl --silent --request POST --data '{"bar": "baz"}' --header "X-Vault-Token:s.UjQxw8hPEIpM18RI3Fg3sD5X" $VAULT_ADDR/v1/otus/otus-ro/config1
+
+curl --silent --header "X-Vault-Token:s.UjQxw8hPEIpM18RI3Fg3sD5X" $VAULT_ADDR/v1/otus/otus-rw/config1 | jq
+{
+  "request_id": "6e482c80-a891-4928-c68e-fe1ccd53c2bc",
+  "lease_id": "",
+  "renewable": false,
+  "lease_duration": 2764800,
+  "data": {
+    "bar": "baz"
+  },
+  "wrap_info": null,
+  "warnings": null,
+  "auth": null
+}
+```
+
+А что с config...
+```
+curl --silent --request POST --data '{"bar": "baz"}' --header "X-Vault-Token:s.UjQxw8hPEIpM18RI3Fg3sD5X" $VAULT_ADDR/v1/otus/otus-ro/config
+{
+  "errors": [
+    "1 error occurred:\n\t* permission denied\n\n"
+  ]
+}
+```
+
+Изменить не получилось, так как в политиках для otus-rw по позволили только read, list и create.
+Т.е. у нас получилось создать новую запись - /otus/otus-rw/config1, но мы не смогли изменить уже существующую - /otus/otus-rw/config
+Чтобы мы могли это делать дополним политики правом на update
+```
+tee otus-policy.hcl <<EOF 
+path "otus/otus-ro/*" {
+    capabilities = ["read", "list"] 
+}
+
+path "otus/otus-rw/*" {
+    capabilities = ["read", "create", "update", "list"]
+} 
+EOF
+```
+
+Обновим их
+```
+kubectl cp otus-policy.hcl vault-0:./tmp
+kubectl exec -it vault-0 -- vault policy write otus-policy /tmp/otus-policy.hcl
+```
+
+И снова попробуем выполнить запись
+```
+curl --silent --request POST --data '{"bar": "baz"}' --header "X-Vault-Token:s.UjQxw8hPEIpM18RI3Fg3sD5X" $VAULT_ADDR/v1/otus/otus-rw/config
+
+curl --silent --header "X-Vault-Token:s.UjQxw8hPEIpM18RI3Fg3sD5X" $VAULT_ADDR/v1/otus/otus-rw/config | jq
+{
+  "request_id": "a02577dd-a254-84f3-b57b-a6afe7bb55e3",
+  "lease_id": "",
+  "renewable": false,
+  "lease_duration": 2764800,
+  "data": {
+    "bar": "baz"
+  },
+  "wrap_info": null,
+  "warnings": null,
+  "auth": null
+}
+```
+
+Теперь запись проходит успешно.
+
+**Передача секретов в приложение**
+
+Используем технологию Agent Sidecar Injector.
+
+Добавим в манифест приложения аннотации
+```
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/agent-inject-status: "update"
+        vault.hashicorp.com/role: "otus"
+        vault.hashicorp.com/agent-inject-secret-index.html: "otus/otus-ro/config"
+        vault.hashicorp.com/secret-volume-path: /usr/share/nginx/html
+        vault.hashicorp.com/agent-inject-template-index.html: |
+          <html>
+          <body>
+          <p>Some secrets:</p>
+          {{- with secret "otus/otus-ro/config" -}}
+          <ul>
+              <li><pre>username: {{ .Data.username }}</pre></li>
+              <li><pre>password: {{ .Data.password }}</pre></li>
+          </ul>
+          {{- end }}
+          </body>
+          </html>
+```
+
+- vault.hashicorp.com/agent-inject - включает механизм сайдкар-агента Vault-а
+- vault.hashicorp.com/agent-inject-status - после успешного внедрения агента у пода появится соотвествующая аннотация со значением injected
+- vault.hashicorp.com/role -  роль Vault-а, используемая для auto-auth метода
+- vault.hashicorp.com/agent-inject-secret-index.html - файл (index.html), куда будут выложены секреты
+- vault.hashicorp.com/secret-volume-path - переопределение пути, по которому будет выложен файл с секретами
+- vault.hashicorp.com/agent-inject-template-index.html - шаблон файла с секретами
+
+После применение манифеста, мы видим, что его описание стало сильно разннообразнее по сравнению с тем, что мы указали
+```
+kubectl get po nginx-5796cd6b48-4rtvj -o yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    kubernetes.io/limit-ranger: 'LimitRanger plugin set: cpu request for container
+      nginx'
+    vault.hashicorp.com/agent-inject: "true"
+    vault.hashicorp.com/agent-inject-secret-index.html: otus/otus-ro/config
+    vault.hashicorp.com/agent-inject-status: injected
+    vault.hashicorp.com/agent-inject-template-index.html: |
+      <html>
+      <body>
+      <p>Some secrets:</p>
+      {{- with secret "otus/otus-ro/config" -}}
+      <ul>
+          <li><pre>username: {{ .Data.username }}</pre></li>
+          <li><pre>password: {{ .Data.password }}</pre></li>
+      </ul>
+      {{- end }}
+      </body>
+      </html>
+    vault.hashicorp.com/role: otus
+    vault.hashicorp.com/secret-volume-path: /usr/share/nginx/html
+  creationTimestamp: "2020-06-12T20:12:02Z"
+  generateName: nginx-5796cd6b48-
+  labels:
+    app: nginx
+    pod-template-hash: 5796cd6b48
+  name: nginx-5796cd6b48-4rtvj
+  namespace: default
+  ownerReferences:
+  - apiVersion: apps/v1
+    blockOwnerDeletion: true
+    controller: true
+    kind: ReplicaSet
+    name: nginx-5796cd6b48
+    uid: d9ffe4a0-ede8-462b-89ca-f231e8114052
+  resourceVersion: "2378861"
+  selfLink: /api/v1/namespaces/default/pods/nginx-5796cd6b48-4rtvj
+  uid: 6859b6c5-dd92-423d-92c7-c37b86394cf3
+spec:
+  containers:
+  - image: nginx
+    imagePullPolicy: IfNotPresent
+    name: nginx
+    ports:
+    - containerPort: 80
+      protocol: TCP
+    resources:
+      requests:
+        cpu: 100m
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: vault-auth-token-cv4w9
+      readOnly: true
+    - mountPath: /usr/share/nginx/html
+      name: vault-secrets
+  - args:
+    - echo ${VAULT_CONFIG?} | base64 -d > /tmp/config.json && vault agent -config=/tmp/config.json
+    command:
+    - /bin/sh
+    - -ec
+    env:
+    - name: VAULT_LOG_LEVEL
+      value: info
+    - name: VAULT_CONFIG
+      value: eyJhdXRvX2F1dGgiOnsibWV0aG9kIjp7InR5cGUiOiJrdWJlcm5ldGVzIiwibW91bnRfcGF0aCI6ImF1dGgva3ViZXJuZXRlcyIsImNvbmZpZyI6eyJyb2xlIjoib3R1cyJ9fSwic2luayI6W3sidHlwZSI6ImZpbGUiLCJjb25maWciOnsicGF0aCI6Ii9ob21lL3ZhdWx0Ly52YXVsdC10b2tlbiJ9fV19LCJleGl0X2FmdGVyX2F1dGgiOmZhbHNlLCJwaWRfZmlsZSI6Ii9ob21lL3ZhdWx0Ly5waWQiLCJ2YXVsdCI6eyJhZGRyZXNzIjoiaHR0cDovL3ZhdWx0LmRlZmF1bHQuc3ZjOjgyMDAifSwidGVtcGxhdGUiOlt7ImRlc3RpbmF0aW9uIjoiL3Vzci9zaGFyZS9uZ2lueC9odG1sL2luZGV4Lmh0bWwiLCJjb250ZW50cyI6Ilx1MDAzY2h0bWxcdTAwM2Vcblx1MDAzY2JvZHlcdTAwM2Vcblx1MDAzY3BcdTAwM2VTb21lIHNlY3JldHM6XHUwMDNjL3BcdTAwM2Vcbnt7LSB3aXRoIHNlY3JldCBcIm90dXMvb3R1cy1yby9jb25maWdcIiAtfX1cblx1MDAzY3VsXHUwMDNlXG4gICAgXHUwMDNjbGlcdTAwM2VcdTAwM2NwcmVcdTAwM2V1c2VybmFtZToge3sgLkRhdGEudXNlcm5hbWUgfX1cdTAwM2MvcHJlXHUwMDNlXHUwMDNjL2xpXHUwMDNlXG4gICAgXHUwMDNjbGlcdTAwM2VcdTAwM2NwcmVcdTAwM2VwYXNzd29yZDoge3sgLkRhdGEucGFzc3dvcmQgfX1cdTAwM2MvcHJlXHUwMDNlXHUwMDNjL2xpXHUwMDNlXG5cdTAwM2MvdWxcdTAwM2Vcbnt7LSBlbmQgfX1cblx1MDAzYy9ib2R5XHUwMDNlXG5cdTAwM2MvaHRtbFx1MDAzZVxuIiwibGVmdF9kZWxpbWl0ZXIiOiJ7eyIsInJpZ2h0X2RlbGltaXRlciI6In19In1dfQ==
+    image: vault:1.4.2
+    imagePullPolicy: IfNotPresent
+    lifecycle: {}
+    name: vault-agent
+    resources:
+      limits:
+        cpu: 500m
+        memory: 128Mi
+      requests:
+        cpu: 250m
+        memory: 64Mi
+    securityContext:
+      runAsGroup: 1000
+      runAsNonRoot: true
+      runAsUser: 100
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: vault-auth-token-cv4w9
+      readOnly: true
+    - mountPath: /home/vault
+      name: home
+    - mountPath: /usr/share/nginx/html
+      name: vault-secrets
+  dnsPolicy: ClusterFirst
+  enableServiceLinks: true
+  initContainers:
+  - args:
+    - echo ${VAULT_CONFIG?} | base64 -d > /tmp/config.json && vault agent -config=/tmp/config.json
+    command:
+    - /bin/sh
+    - -ec
+    env:
+    - name: VAULT_LOG_LEVEL
+      value: info
+    - name: VAULT_CONFIG
+      value: eyJhdXRvX2F1dGgiOnsibWV0aG9kIjp7InR5cGUiOiJrdWJlcm5ldGVzIiwibW91bnRfcGF0aCI6ImF1dGgva3ViZXJuZXRlcyIsImNvbmZpZyI6eyJyb2xlIjoib3R1cyJ9fSwic2luayI6W3sidHlwZSI6ImZpbGUiLCJjb25maWciOnsicGF0aCI6Ii9ob21lL3ZhdWx0Ly52YXVsdC10b2tlbiJ9fV19LCJleGl0X2FmdGVyX2F1dGgiOnRydWUsInBpZF9maWxlIjoiL2hvbWUvdmF1bHQvLnBpZCIsInZhdWx0Ijp7ImFkZHJlc3MiOiJodHRwOi8vdmF1bHQuZGVmYXVsdC5zdmM6ODIwMCJ9LCJ0ZW1wbGF0ZSI6W3siZGVzdGluYXRpb24iOiIvdXNyL3NoYXJlL25naW54L2h0bWwvaW5kZXguaHRtbCIsImNvbnRlbnRzIjoiXHUwMDNjaHRtbFx1MDAzZVxuXHUwMDNjYm9keVx1MDAzZVxuXHUwMDNjcFx1MDAzZVNvbWUgc2VjcmV0czpcdTAwM2MvcFx1MDAzZVxue3stIHdpdGggc2VjcmV0IFwib3R1cy9vdHVzLXJvL2NvbmZpZ1wiIC19fVxuXHUwMDNjdWxcdTAwM2VcbiAgICBcdTAwM2NsaVx1MDAzZVx1MDAzY3ByZVx1MDAzZXVzZXJuYW1lOiB7eyAuRGF0YS51c2VybmFtZSB9fVx1MDAzYy9wcmVcdTAwM2VcdTAwM2MvbGlcdTAwM2VcbiAgICBcdTAwM2NsaVx1MDAzZVx1MDAzY3ByZVx1MDAzZXBhc3N3b3JkOiB7eyAuRGF0YS5wYXNzd29yZCB9fVx1MDAzYy9wcmVcdTAwM2VcdTAwM2MvbGlcdTAwM2Vcblx1MDAzYy91bFx1MDAzZVxue3stIGVuZCB9fVxuXHUwMDNjL2JvZHlcdTAwM2Vcblx1MDAzYy9odG1sXHUwMDNlXG4iLCJsZWZ0X2RlbGltaXRlciI6Int7IiwicmlnaHRfZGVsaW1pdGVyIjoifX0ifV19
+    image: vault:1.4.2
+    imagePullPolicy: IfNotPresent
+    name: vault-agent-init
+    resources:
+      limits:
+        cpu: 500m
+        memory: 128Mi
+      requests:
+        cpu: 250m
+        memory: 64Mi
+    securityContext:
+      runAsGroup: 1000
+      runAsNonRoot: true
+      runAsUser: 100
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /home/vault
+      name: home
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: vault-auth-token-cv4w9
+      readOnly: true
+    - mountPath: /usr/share/nginx/html
+      name: vault-secrets
+  nodeName: gke-otus-infra-pool-c1cf63a8-lzk0
+  priority: 0
+  restartPolicy: Always
+  schedulerName: default-scheduler
+  securityContext: {}
+  serviceAccount: vault-auth
+  serviceAccountName: vault-auth
+  terminationGracePeriodSeconds: 30
+  tolerations:
+  - effect: NoExecute
+    key: node.kubernetes.io/not-ready
+    operator: Exists
+    tolerationSeconds: 300
+  - effect: NoExecute
+    key: node.kubernetes.io/unreachable
+    operator: Exists
+    tolerationSeconds: 300
+  volumes:
+  - name: vault-auth-token-cv4w9
+    secret:
+      defaultMode: 420
+      secretName: vault-auth-token-cv4w9
+  - emptyDir:
+      medium: Memory
+    name: home
+  - emptyDir:
+      medium: Memory
+    name: vault-secrets
+
+...
+
+```
+
+Появился инит-контейнер, и контейнер сайдкар-агента. Оба, что характерно, с image: vault:1.4.2
+
+Попробуем обратиться к сервису приложения
+```
+kubectl get svc -l app=nginx
+NAME            TYPE       CLUSTER-IP   EXTERNAL-IP   PORT(S)        AGE
+service-nginx   NodePort   10.56.2.1    <none>        80:32560/TCP   25m
+
+curl 10.128.0.16:32560
+<html>
+<body>
+<p>Some secrets:</p><ul>
+    <li><pre>username: otus-ro</pre></li>
+    <li><pre>password: asajkjkahs</pre></li>
+</ul>
+</body>
+</html>
+```
+
+Передача секретов в страницу nginx-а прошла успешно.
+
+**Работа с сертификатами**
+
+Для начала включим pki engine, добавим срок действия
+```
+kubectl exec -it vault-0 -- vault secrets enable pki
+Success! Enabled the pki secrets engine at: pki/
+
+kubectl exec -it vault-0 -- vault secrets tune -max-lease-ttl=87600h pki
+Success! Tuned the secrets engine at: pki/
+
+kubectl exec -it vault-0 -- vault write -field=certificate pki/root/generate/internal common_name="exmaple.ru" ttl=87600h > CA_cert.crt
+```
+
+Пропишем урлы для ca и отозванных сертификатов
+```
+kubectl exec -it vault-0 -- vault write pki/config/urls issuing_certificates="http://vault:8200/v1/pki/ca" crl_distribution_points="http://vault:8200/v1/pki/crl"
+
+Success! Data written to: pki/config/urls
+```
+
+Cоздадим промежуточный сертификат
+```
+kubectl exec -it vault-0 -- vault secrets enable --path=pki_int pki
+Success! Enabled the pki secrets engine at: pki_int/
+
+kubectl exec -it vault-0 -- vault secrets tune -max-lease-ttl=87600h pki_int
+Success! Tuned the secrets engine at: pki_int/
+
+kubectl exec -it vault-0 -- vault write -format=json pki_int/intermediate/generate/internal common_name="example.ru Intermediate Authority" | jq -r '.data.csr' > pki_intermediate.csr
+```
+
+Пропишем промежуточный сертификат в vault
+```
+kubectl cp pki_intermediate.csr vault-0:./tmp/
+
+kubectl exec -it vault-0 -- vault write -format=json pki/root/sign-intermediate csr=@/tmp/pki_intermediate.csr format=pem_bundle ttl="43800h" | jq -r '.data.certificate' > intermediate.cert.pem
+
+kubectl cp intermediate.cert.pem vault-0:./tmp/
+
+kubectl exec -it vault-0 -- vault write pki_int/intermediate/set-signed certificate=@/tmp/intermediate.cert.pem
+Success! Data written to: pki_int/intermediate/set-signed
+```
+
+Создадим и отзовем новые сертификаты
+
+Создадим роль для выдачи сертификатов
+```
+kubectl exec -it vault-0 -- vault write pki_int/roles/example-dot-ru allowed_domains="example.ru" allow_subdomains=true max_ttl="720h"
+Success! Data written to: pki_int/roles/example-dot-ru
+```
+
+Создадим сертификат
+```
+kubectl exec -it vault-0 -- vault write pki_int/issue/example-dot-ru common_name="gitlab.example.ru" ttl="24h"
+Key                 Value
+---                 -----
+ca_chain            [-----BEGIN CERTIFICATE-----
+MIIDnDCCAoSgAwIBAgIUIHJLZ4IDP3NQzGdMBDL+5IIhTacwDQYJKoZIhvcNAQEL
+BQAwFTETMBEGA1UEAxMKZXhtYXBsZS5ydTAeFw0yMDA2MTIyMDU2NDhaFw0yNTA2
+MTEyMDU3MThaMCwxKjAoBgNVBAMTIWV4YW1wbGUucnUgSW50ZXJtZWRpYXRlIEF1
+dGhvcml0eTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAOfWBPCdAQ8U
+tcfBh37pB5sWCY0whBzoRaiIKFeeqffORZSqUnLFj4eEdr4VrGuJt0UcPw2Lva9+
+f6Ni/bDmNVJoyGgwMqGFIZ+EA+Nq7tw9jvdzlibtZll9/TtHxAM72wEEc/W9tXle
+znovYJgoxSUznSVJmmR0EvyfJNF1DSczg917ji6miOXxWLDo6QyNxqNKY7oeL4dU
+3B5cQ5il9Q3ETWQ/q0zXxlcwJDjqQRDCV0EvF8AAuyIzu6PdFvsHp7NGeAnKuJlT
+GSHt9aS8UmPIcu+2rFzxfaxfdN7maDb/1pNOTMUKi+WtiiUEem21RrtaKLa1l2fO
+/xeoJzNobr8CAwEAAaOBzDCByTAOBgNVHQ8BAf8EBAMCAQYwDwYDVR0TAQH/BAUw
+AwEB/zAdBgNVHQ4EFgQUuv80s8DUixpwYWx39nhmmC9RAW8wHwYDVR0jBBgwFoAU
+N9ESWFIWNXC2vjtIB1Dx86HC+vAwNwYIKwYBBQUHAQEEKzApMCcGCCsGAQUFBzAC
+hhtodHRwOi8vdmF1bHQ6ODIwMC92MS9wa2kvY2EwLQYDVR0fBCYwJDAioCCgHoYc
+aHR0cDovL3ZhdWx0OjgyMDAvdjEvcGtpL2NybDANBgkqhkiG9w0BAQsFAAOCAQEA
+ppUpbur3F6Lw50dJEfG5KQPo83PiaqEsQV1NpwXA5Qd5V2UthE5wNvkN0dIaDDP5
+yVeYflpEsVKXiMW4SZa3iXhQMrO+KKlpWzHLYZlBoNivKB47IQXIe5etl1ePVN9F
+ZAAbsfPduk+Md6o7uG74AJ3CvTsVECaDKpmJr5NJRiEinYCFLz1VEAk3J5m1Fhx6
+Psfol4mphDM+7pH5VUfaW3PEatjpsa+sSy02hqrou7d2lG3mQ7+Im+mqhUhAkR37
+jD6huV+UE8b89r1DFTzyCwICqvs7w6H+7JYQCVUY60n7HMDFtPzfxWsg6E9ndfi8
+kISo30bb91+t89xqpmNthw==
+-----END CERTIFICATE-----]
+certificate         -----BEGIN CERTIFICATE-----
+MIIDZzCCAk+gAwIBAgIUAvt5nJxhICEm0WxqXiJD0CZjnSMwDQYJKoZIhvcNAQEL
+BQAwLDEqMCgGA1UEAxMhZXhhbXBsZS5ydSBJbnRlcm1lZGlhdGUgQXV0aG9yaXR5
+MB4XDTIwMDYxMjIxMDI1NloXDTIwMDYxMzIxMDMyNlowHDEaMBgGA1UEAxMRZ2l0
+bGFiLmV4YW1wbGUucnUwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDH
+PRXcmeOcqD5kTuioFzJk9NutfgA/U+fuZffMaVbny2XpTKCRqFo1uaEWe/tRwq7G
+C5S7YzHpHYoCztPQhi/SLrjb+dDFcdVNw0YW6yVTdpX/rZDnSLBgXXE76yHXhN48
+vEDspvT6xjhCPdyP44KZrFfLWcnJci1WoJdkFX0S/eUQ/bhaScXU/8+YNAZ/JgDs
+kxAhcw3i7IoS6D3/wT64mkTXuwSZBUvrlXmdIy4GnxweYy4HbO/hrdxXcYMGxxZC
+KpU6TYeZMbFXYKCVLwLmFRuEV1iusXJKl+w/osy19LOwh0HaZK5NGq5laopnzqOa
+G0XkpSJ9zLOGTXNnxD7BAgMBAAGjgZAwgY0wDgYDVR0PAQH/BAQDAgOoMB0GA1Ud
+JQQWMBQGCCsGAQUFBwMBBggrBgEFBQcDAjAdBgNVHQ4EFgQUoCmbfImoA2xCLuDh
++KaeEPW2pj8wHwYDVR0jBBgwFoAUuv80s8DUixpwYWx39nhmmC9RAW8wHAYDVR0R
+BBUwE4IRZ2l0bGFiLmV4YW1wbGUucnUwDQYJKoZIhvcNAQELBQADggEBANzwo0+Z
+bVaahiFhj4LWk7QDcbVF+I53PPl9XTXWFTYQ+JTXScUVFvD0FF2h8OSLSeRiOGV8
+JrrUldfbTktbyyJVtYqrMIcfmiC/GqfpwL1vk9vUsQ2oVqP7uqF46nahrT1IilSH
+PsAqNJuLFtzh8NKMUTbgwnbp59O4GT/NeeOEoEvoEs3R2ppJ6rxxurLEtjXUpMJi
+t/rRkWYFe8GMOuW7084TwzkgEjDPPNt5G0UbpHg50vnmJPwOi2xFL/wsC2Pqic8d
+IXKWddqOeRMritw6e4ED6uZXKQ/fy8r/f4gMdPmvF7rlEJgDF5C4i0eitfouE6WH
+FdsTKIs4Ms/LZEM=
+-----END CERTIFICATE-----
+expiration          1592082206
+issuing_ca          -----BEGIN CERTIFICATE-----
+MIIDnDCCAoSgAwIBAgIUIHJLZ4IDP3NQzGdMBDL+5IIhTacwDQYJKoZIhvcNAQEL
+BQAwFTETMBEGA1UEAxMKZXhtYXBsZS5ydTAeFw0yMDA2MTIyMDU2NDhaFw0yNTA2
+MTEyMDU3MThaMCwxKjAoBgNVBAMTIWV4YW1wbGUucnUgSW50ZXJtZWRpYXRlIEF1
+dGhvcml0eTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAOfWBPCdAQ8U
+tcfBh37pB5sWCY0whBzoRaiIKFeeqffORZSqUnLFj4eEdr4VrGuJt0UcPw2Lva9+
+f6Ni/bDmNVJoyGgwMqGFIZ+EA+Nq7tw9jvdzlibtZll9/TtHxAM72wEEc/W9tXle
+znovYJgoxSUznSVJmmR0EvyfJNF1DSczg917ji6miOXxWLDo6QyNxqNKY7oeL4dU
+3B5cQ5il9Q3ETWQ/q0zXxlcwJDjqQRDCV0EvF8AAuyIzu6PdFvsHp7NGeAnKuJlT
+GSHt9aS8UmPIcu+2rFzxfaxfdN7maDb/1pNOTMUKi+WtiiUEem21RrtaKLa1l2fO
+/xeoJzNobr8CAwEAAaOBzDCByTAOBgNVHQ8BAf8EBAMCAQYwDwYDVR0TAQH/BAUw
+AwEB/zAdBgNVHQ4EFgQUuv80s8DUixpwYWx39nhmmC9RAW8wHwYDVR0jBBgwFoAU
+N9ESWFIWNXC2vjtIB1Dx86HC+vAwNwYIKwYBBQUHAQEEKzApMCcGCCsGAQUFBzAC
+hhtodHRwOi8vdmF1bHQ6ODIwMC92MS9wa2kvY2EwLQYDVR0fBCYwJDAioCCgHoYc
+aHR0cDovL3ZhdWx0OjgyMDAvdjEvcGtpL2NybDANBgkqhkiG9w0BAQsFAAOCAQEA
+ppUpbur3F6Lw50dJEfG5KQPo83PiaqEsQV1NpwXA5Qd5V2UthE5wNvkN0dIaDDP5
+yVeYflpEsVKXiMW4SZa3iXhQMrO+KKlpWzHLYZlBoNivKB47IQXIe5etl1ePVN9F
+ZAAbsfPduk+Md6o7uG74AJ3CvTsVECaDKpmJr5NJRiEinYCFLz1VEAk3J5m1Fhx6
+Psfol4mphDM+7pH5VUfaW3PEatjpsa+sSy02hqrou7d2lG3mQ7+Im+mqhUhAkR37
+jD6huV+UE8b89r1DFTzyCwICqvs7w6H+7JYQCVUY60n7HMDFtPzfxWsg6E9ndfi8
+kISo30bb91+t89xqpmNthw==
+-----END CERTIFICATE-----
+private_key         -----BEGIN RSA PRIVATE KEY-----
+MIIEowIBAAKCAQEAxz0V3JnjnKg+ZE7oqBcyZPTbrX4AP1Pn7mX3zGlW58tl6Uyg
+kahaNbmhFnv7UcKuxguUu2Mx6R2KAs7T0IYv0i642/nQxXHVTcNGFuslU3aV/62Q
+50iwYF1xO+sh14TePLxA7Kb0+sY4Qj3cj+OCmaxXy1nJyXItVqCXZBV9Ev3lEP24
+WknF1P/PmDQGfyYA7JMQIXMN4uyKEug9/8E+uJpE17sEmQVL65V5nSMuBp8cHmMu
+B2zv4a3cV3GDBscWQiqVOk2HmTGxV2CglS8C5hUbhFdYrrFySpfsP6LMtfSzsIdB
+2mSuTRquZWqKZ86jmhtF5KUifcyzhk1zZ8Q+wQIDAQABAoIBAFmrrIM037RKJIqQ
+2TWN+yhk69oRs5rM8L3jNrvRTUPVz3BJBJuJ4c/8U/wCoQITVQXdgHs2EeiRWuQY
+okxfmHZIgPrAXK4ApbfyA0GdY5dE8A262FS/6mH0rFoDYZ/WNQ+wyqe4HNohDIED
+xpkcFFOFtZ3YM3Fu6ejrLjflU/2PbFHLrijKDqjhM5K2gq8LHHM3SVtliZeqU6Xf
+2D0ygDwm8tPtI27bVR9F6hLyLDzvw6c+k2dijDyCKgLF0riIGcqs93Y2ZwblCAtb
+vorUceetcSRAeWk9Ha1TUxQVgSg0/+oEvbRuc1Nq4nloyFcOm9XCN4YrL79ZGP1B
+bD+TjoECgYEA1oYg4nHl7pXLbLsdOE6Kt9BMC1E5zyeN9+OrpS+0SsMFlm2wDZ4t
+Vc0yUxSdeJ3lxzNm+MbQTdhhLg9XcBNeNk+fAxGng2xKQ47/NqrBlOuPvOIktVp/
+WjQBgMYmW0ubUz/FF9drHWTAh4DLSY+tSzVpiVGR00yRv7MResrhfFUCgYEA7cJo
+vmaMUzqfjWRlbSTArgLm4jZejojtS/xhnwSWc++voVX6GRs1zOwXYyQVyhueUS1Y
+C4pv4vbp4+keZpAGvt+IAuP/ZpXrz/UzkkTNsTk5iqO2GGDYZVicHB4bZkGtY8gi
+Zp3YGfPS++BthiPSTiYVHnjOYVyeYLXpnEIRpL0CgYBCbcplFKwE03Hou5ByzS97
+eA70OjTShwcZSfDu9/S2aemjCVhI/0A+n4oD3BBfN1Xd93bddoMud+Cv6KRE2lqE
+KueshZz/v1rHzNIO1ZWYTdF2xfhkCCADiLMmczWRc7onb0nS9iv/MCHGVAWfQ9R/
+w4xor0+exMklOYgiJAzq+QKBgFwOnP2zuPt0xFg7miXjSBNYHktSH9RyYea85pNq
+dFKZaFhAcOCNr4wTkY6aZzFk9iyaMO/u/xlS3waWuWWeuG3pIMF1w+rVe4N+fiRR
+LY9EB+qNLrFLth2vbGpaoeM65Maws9klnomV5YgOwnlgn0oQ5rZwsf/ym4P4i2Ys
+EqbFAoGBAJt8hRz3usGwYvVMFSn0AWs0ynReJ1MIDaRSTCp+U+kWoNm1bTZUcZDI
+mXenGCxiNRiTZaNGpSXLhUNw7KKLoBORCW1M8aZf2qPJxg2wb7z/i+fssRIeJjoj
+ZTfPnVeHOpRCmmjJ8oJDXWf9fUOjq2EwyhTAwrUjLrb6aoPvp93e
+-----END RSA PRIVATE KEY-----
+private_key_type    rsa
+serial_number       02:fb:79:9c:9c:61:20:21:26:d1:6c:6a:5e:22:43:d0:26:63:9d:23
+```
+
+Как видим, нам выдали всю цепочку сертификатов.
+
+Отзовем сертификат
+```
+kubectl exec -it vault-0 -- vault write pki_int/revoke serial_number="02:fb:79:9c:9c:61:20:21:26:d1:6c:6a:5e:22:43:d0:26:63:9d:23"
+Key                        Value
+---                        -----
+revocation_time            1591995898
+revocation_time_rfc3339    2020-06-12T21:04:58.63917116Z
+```
+
 # Выполнено ДЗ №9
 # Kubernetes Logging
 
  - [x] Основное ДЗ
 
 ## В процессе сделано:
-
-Установлен Nginx
-```
-helm repo update
-helm pull bitnami/nginx --untar
-
-helm upgrade --install nginx nginx
-=======
-### Prepare cluster
-
 
 Обновляем конфигурацию для kubectl
 ```
