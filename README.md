@@ -372,6 +372,8 @@ Spec:
 Events:        <none>
 ```
 
+Вторую версию приложения можно наблюдать по тому же адресу: http://mooit.sablin.de/
+
 # Выполнено ДЗ №10
 # Kubernetes Hashicorp Vault
 
