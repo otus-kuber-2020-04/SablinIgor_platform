@@ -1,0 +1,15 @@
+phantom:
+  address: 130.193.51.127:80
+  load_profile:
+    load_type: rps
+    schedule: line(1, 10, 20m)
+  header_http: "1.1"
+  headers:
+    - "[Host: mooit.sablin.de]"
+    - "[Connection: close]"
+  uris:
+    - "/"
+console:
+  enabled: true # enable console output
+telegraf:
+  enabled: false # let's disable telegraf monitoring for the first time

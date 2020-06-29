@@ -1,3 +1,249 @@
+# Выполнено ДЗ №11
+# Kubernetes GitOps
+
+ - [x] Основное ДЗ
+ 
+**Репозиторий с кодом приложения**
+https://gitlab.com/SablinIgor/microservices-demo.git
+ 
+**Подготовка кластра**
+
+В GKE поднят кластер с 4-я узлами (по 2 CPU) и включенным Istio on GKE add-on.
+
+```
+>>> kubectl get nodes
+NAME                                  STATUS   ROLES    AGE     VERSION
+gke-otus-default-pool-e0df26ce-bz9f   Ready    <none>   6m58s   v1.16.9-gke.6
+gke-otus-default-pool-e0df26ce-h439   Ready    <none>   6m58s   v1.16.9-gke.6
+gke-otus-default-pool-e0df26ce-nbpm   Ready    <none>   6m58s   v1.16.9-gke.6
+gke-otus-default-pool-e0df26ce-vf3q   Ready    <none>   6m58s   v1.16.9-gke.6
+
+>>> kubectl get ns
+NAME              STATUS   AGE
+default           Active   8m23s
+istio-system      Active   8m1s
+kube-node-lease   Active   8m24s
+kube-public       Active   8m24s
+kube-system       Active   8m25s
+```
+
+**Flux**
+
+Процесс установки Flux-а
+```
+kubectl apply -f https://raw.githubusercontent.com/fluxcd/helm-operator/master/deploy/crds.yaml
+helm repo add fluxcd https://charts.fluxcd.io
+kubectl create namespace flux
+helm upgrade --install flux fluxcd/flux -f flux.values.yaml --namespace flux
+helm upgrade --install helm-operator fluxcd/helm-operator -f helm-operator.values.yaml --namespace flux
+```
+
+На рабочей станции необходимо установить консольную утилиту
+```
+brew install fluxctl
+```
+
+SSH-ключ, при помощи которого Flux будет обращаться к репозиторию с кодом получаем так:
+```
+fluxctl identity --k8s-fwd-ns flux
+```
+
+Лог процесса создания namespace-а
+```
+ts=2020-06-27T11:20:24.815973455Z caller=loop.go:133 component=sync-loop event=refreshed url=ssh://git@gitlab.com/SablinIgor/microservices-demo.git branch=master HEAD=5e881d641bd5792e614b115af3c02eb16a778c44
+ts=2020-06-27T11:20:24.959491754Z caller=sync.go:73 component=daemon info="trying to sync git changes to the cluster" old=587b2c1a6cd9e28d61a44d3a5806d8db8728dc6e new=5e881d641bd5792e614b115af3c02eb16a778c44
+ts=2020-06-27T11:20:25.589993123Z caller=sync.go:539 method=Sync cmd=apply args= count=1
+ts=2020-06-27T11:20:26.213618928Z caller=sync.go:605 method=Sync cmd="kubectl apply -f -" took=623.550785ms err=null output="namespace/microservices-demo created"
+ts=2020-06-27T11:20:26.223370348Z caller=daemon.go:701 component=daemon event="Sync: 5e881d6, <cluster>:namespace/microservices-demo" logupstream=false
+```
+
+При обнаружении к docker-registry новой версии сервиса Flux устанавливает его и обновляет информацию в релизном манифесте.
+```
+Commit c0c956f0  authored 3 minutes ago by Weave Flux's avatar Weave Flux
+Auto-release soaron/frontend:0.0.3
+[ci skip]
+      repository: soaron/frontend
+-     tag: 0.0.2
++     tag: 0.0.3
+```
+
+Изменение состояния чарта (к примеру мы поменяли имя у Deployment-а) приводит к тому, helm-operator обнаруживает это изменение и вносит соответствующие правки в состояние релиза.
+```
+ts=2020-06-27T15:05:58.27533823Z caller=helm.go:69 component=helm version=v3 info="Created a new Deployment called \"frontend-hipster\" in microservices-demo\n" targetNamespace=microservices-demo release=frontend
+```
+
+Добавляем сайдкар-контейнер istio к нашим сервисам (pod-ы удаляем, чтобы вновь созданные получили сайдкары)
+```
+>>> cat deploy/namespaces/microservices-demo.yaml 
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: microservices-demo
+  labels:
+    istio-injection: enabled%
+
+kubectl describe pod -l app=frontend -n microservices-demo
+```
+
+Доступность приложения по внешнему IP Istio
+```
+>>> curl http://34.66.132.197/                                                                                                    
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Online Boutique</title>
+...
+```
+
+**Flagger**
+
+Собственно установка
+```
+helm repo add flagger https://flagger.app
+kubectl apply -f https://raw.githubusercontent.com/weaveworks/flagger/master/artifacts/flagger/crd.yaml
+helm upgrade --install flagger flagger/flagger --namespace=istio-system --set crd.create=false --set meshProvider=istio --set metricsServer=http://prometheus.monitoring:9090
+```
+
+```
+frontend-hipster-5bd4bcb8cc-bvn7f           2/2     Running   0          60s -> image: soaron/frontend:0.0.4
+frontend-hipster-primary-79f5d97854-m9ks9   2/2     Running   0          40m -> image: soaron/frontend:0.0.3
+```
+
+Однако обновление canary не проходило, так как flagger не получал от Prometheus-а данные о проходящем трафике.
+
+Проверка работоспособности canary шла на другом кластере
+
+**Istio + flux + flugger + canary release**
+
+Репозиторий с кодом: https://gitlab.com/SablinIgor/canary-demo.git
+
+Кубернетес кластер развернут в Yandex.Cloud.
+
+Установка Istio
+```
+curl -L https://istio.io/downloadIstio | sh -
+cd istio-1.6.3
+export PATH=$PWD/bin:$PATH
+istioctl install --set profile=demo
+✔ Istio core installed
+✔ Istiod installed
+✔ Egress gateways installed
+✔ Ingress gateways installed
+✔ Addons installed
+✔ Installation complete
+```
+
+Проверим работоспособность Istio на демо приложении Bookinfo
+```
+kubectl label namespace default istio-injection=enabled
+kubectl apply -f samples/bookinfo/platform/kube/bookinfo.yaml
+
+>>> kubectl get pods
+NAME                              READY   STATUS    RESTARTS   AGE
+details-v1-78db589446-8kmxl       2/2     Running   0          73s
+productpage-v1-7f4cc988c6-wlpd2   2/2     Running   0          70s
+ratings-v1-756b788d54-8mtp6       2/2     Running   0          71s
+reviews-v1-849fcdfd8b-jsx5h       2/2     Running   0          71s
+reviews-v2-5b6fb6c4fb-xxgt8       1/2     Running   0          71s
+reviews-v3-7d94d58566-56glb       2/2     Running   0          71s
+
+>>> kubectl get services
+NAME          TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)    AGE
+details       ClusterIP   10.96.187.33    <none>        9080/TCP   104s
+kubernetes    ClusterIP   10.96.128.1     <none>        443/TCP    14h
+productpage   ClusterIP   10.96.134.103   <none>        9080/TCP   102s
+ratings       ClusterIP   10.96.142.139   <none>        9080/TCP   104s
+reviews       ClusterIP   10.96.209.65    <none>        9080/TCP   102s
+```
+
+```
+>>> kubectl exec -it $(kubectl get pod -l app=ratings -o jsonpath='{.items[0].metadata.name}') -c ratings -- curl productpage:9080/productpage | grep -o "<title>.*</title>"
+<title>Simple Bookstore App</title>
+```
+
+Установим gateway и virtual service для обращения к приложению внутри кластера:
+```
+>>> kubectl apply -f samples/bookinfo/networking/bookinfo-gateway.yaml
+gateway.networking.istio.io/bookinfo-gateway created
+virtualservice.networking.istio.io/bookinfo created
+```
+
+Проверим все ли корректно.
+Если какой-то pod не имеет sidecar-а, то получим соответствующее уведомление.
+```
+>>> istioctl analyze
+Warn [IST0103] (Pod nginx.default) The pod is missing the Istio proxy. This can often be resolved by restarting or redeploying the workload.
+Error: Analyzers found issues when analyzing namespace: defaul
+```
+
+Если все корректно, то получим следующий результат:
+```
+>>> istioctl analyze
+✔ No validation issues found when analyzing namespace: default.
+```
+
+Determining the ingress IP and ports
+```
+>>> kubectl get svc istio-ingressgateway -n istio-system
+NAME                   TYPE           CLUSTER-IP      EXTERNAL-IP      PORT(S)                                                                      AGE
+istio-ingressgateway   LoadBalancer   10.96.140.145   130.193.51.127   15020:31234/TCP,80:31685/TCP,443:30089/TCP,31400:31365/TCP,15443:30716/TCP   14m
+```
+
+Обратимся к приложению:
+![ProductPage](https://images-si.s3.eu-west-3.amazonaws.com/product_page.png)
+
+
+Откроем доступ к Grafana dashboard
+```
+>>> kubectl -n istio-system port-forward $(kubectl -n istio-system get pod -l app=grafana -o jsonpath='{.items[0].metadata.name}') 3000:3000 &
+```
+
+Посмотрим http://localhost:3000/dashboard/db/istio-mesh-dashboard
+![Grafana dashboard](https://images-si.s3.eu-west-3.amazonaws.com/grafana_dashboard.png)
+
+Для генерации трафика воспольземся инструментом Yandex.Tank
+Use Yandex-tank to produce trafic
+
+Зайдем в контейнер и запустим команду yandex-tank
+```
+docker run \
+    -v $(pwd):/var/loadtest \
+    -v $SSH_AUTH_SOCK:/ssh-agent -e SSH_AUTH_SOCK=/ssh-agent \
+    --net host \
+    -it \
+    --entrypoint /bin/bash \
+    direvius/yandex-tank
+
+[tank]root@linuxkit-025000000001: yandex-tank
+```
+
+Example load.yaml
+```
+phantom:
+  address: 130.193.51.127:80
+  load_profile:
+    load_type: rps
+    schedule: line(1, 10, 10m)
+  header_http: "1.1"
+  headers:
+    - "[Host: 130.193.51.127]"
+    - "[Connection: close]"
+  uris:
+    - "/productpage"
+console:
+  enabled: true # enable console output
+telegraf:
+  enabled: false # let's disable telegraf monitoring for the first time
+```
+
+На дашборде будем наблюдать следующую картиру:
+![Service under pressure](https://images-si.s3.eu-west-3.amazonaws.com/grafana_dashboard_yandex_tank.png)
+
 # Выполнено ДЗ №10
 # Kubernetes Hashicorp Vault
 
