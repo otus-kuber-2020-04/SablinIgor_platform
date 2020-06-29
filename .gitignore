@@ -87,6 +87,10 @@ modules.xml
 # Sonarlint plugin
 .idea/**/sonarlint/
 
+logs/
+
+*.log
+
 # SonarQube Plugin
 .idea/**/sonarIssues.xml
 
