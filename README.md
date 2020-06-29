@@ -241,8 +241,136 @@ telegraf:
   enabled: false # let's disable telegraf monitoring for the first time
 ```
 
-На дашборде будем наблюдать следующую картиру:
+На дашборде будем наблюдать следующую картину:
 ![Service under pressure](https://images-si.s3.eu-west-3.amazonaws.com/grafana_dashboard_yandex_tank.png)
+
+Итак, вы убедились в работоспособности Istion (хотя бы в основных моментах), перейдем к проверке деплоя методом Canary.
+
+Для этого сначала установим Flex
+```
+helm repo add fluxcd https://charts.fluxcd.io
+kubectl apply -f https://raw.githubusercontent.com/fluxcd/helm-operator/master/deploy/crds.yaml
+kubectl create namespace flux
+
+helm upgrade -i flux fluxcd/flux \
+--set git.url=git@gitlab.com:SablinIgor/canary-demo.git \
+--namespace flux
+
+helm upgrade -i helm-operator fluxcd/helm-operator \
+--set git.ssh.secretName=flux-git-deploy \
+--set helm.versions=v3 \
+--namespace flux
+
+fluxctl identity --k8s-fwd-ns flux
+```
+
+Полученный при помощи последней команды ключ укажем в профиле пользователя на Gitlab.
+
+В репозитории https://gitlab.com/SablinIgor/canary-demo.git находятся манифесты создания Namespace (microservices-canary-demo) и чарт установки приложения MooIt.
+
+Проверим, что Flex обнаружил эти манифесты
+```
+>>> kubectl get ns
+NAME                        STATUS   AGE
+default                     Active   31h
+flux                        Active   9h
+istio-system                Active   17h
+kube-node-lease             Active   31h
+kube-public                 Active   31h
+kube-system                 Active   31h
+microservices-canary-demo   Active   9h
+
+>>> kubectl get helmrelease -n microservices-canary-demo
+NAME    RELEASE   PHASE       STATUS     MESSAGE                                                                           AGE
+mooit   mooit     Succeeded   deployed   Release was successful for Helm release 'mooit' in 'microservices-canary-demo'.   6m10s
+```
+
+Проверим доступность приложения по созданной DNS записи, указывающей на IP istio-ingressgateway - http://mooit.sablin.de/
+
+Далее установим Flagger, при помощи которого и будем выполнять canary-деплой:
+```
+helm repo add flagger https://flagger.app
+kubectl apply -f https://raw.githubusercontent.com/weaveworks/flagger/master/artifacts/flagger/crd.yaml
+
+helm upgrade -i flagger flagger/flagger \
+--namespace=istio-system \
+--set crd.create=false \
+--set meshProvider=istio \
+--set metricsServer=http://prometheus:9090
+
+helm upgrade -i flagger-grafana flagger/grafana \
+--namespace=istio-system \
+--set url=http://prometheus.istio-system:9090 \
+--set user=admin \
+--set password=admin
+```
+
+Заодно поставили и графану, содержащую дашборды, удобные для мониторинга трафика.
+
+Убедимся, что у нас все хорошо с canary-ресурсом:
+```
+>>> kubectl get canary -n microservices-canary-demo
+NAME    STATUS      WEIGHT   LASTTRANSITIONTIME
+mooit   Succeeded   0        2020-06-28T20:47:31Z
+```
+
+Подадим нагрузку на приложение при помощи Yandex.Tank.
+
+И выпустим вторую версию приложения с тэгом 0.0.2
+https://gitlab.com/SablinIgor/canary-demo/-/jobs/614778050
+
+В логе Flagger-а мы видим обнаружение новой версии приложения и начало установки canary-деплоя.
+![Canary begins](https://images-si.s3.eu-west-3.amazonaws.com/Canary-begins.png)
+
+По прошествии некоторого кол-ва времени в логе видно, что трафик на "канарейке" обрабатывается без ошибок и значит можно переводить основное приложение на новую версию
+![Canary ends](https://images-si.s3.eu-west-3.amazonaws.com/Canary-ends.png)
+
+В графане мы можем наблюдать за потоками трафика на основную и canary-версии приложения
+![Grafana canary](https://images-si.s3.eu-west-3.amazonaws.com/Grafana-canary.png)
+
+Обратим так же внимание, как Flagger создает дополнительные сервисы (-canary и -primary) для приложения и изменяет VirtualServive
+```
+>>> kubectl get svc -n microservices-canary-demo
+NAME            TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)    AGE
+mooit           ClusterIP   10.96.194.75    <none>        5000/TCP   9h
+mooit-canary    ClusterIP   10.96.242.204   <none>        5000/TCP   7h58m
+mooit-primary   ClusterIP   10.96.150.139   <none>        5000/TCP   7h58m
+
+>>> kubectl describe virtualservices.networking.istio.io mooit -n microservices-canary-demo
+Name:         mooit
+Namespace:    microservices-canary-demo
+Labels:       <none>
+Annotations:  flagger.kubernetes.io/original-configuration:
+                {"hosts":["mooit.sablin.de"],"gateways":["mooit-gateway"],"http":[{"route":[{"destination":{"host":"mooit","port":{"number":5000}},"weight...
+              helm.fluxcd.io/antecedent: microservices-canary-demo:helmrelease/mooit
+API Version:  networking.istio.io/v1beta1
+Kind:         VirtualService
+Metadata:
+  Creation Timestamp:  2020-06-28T19:45:15Z
+  Generation:          6
+  Resource Version:    345440
+  Self Link:           /apis/networking.istio.io/v1beta1/namespaces/microservices-canary-demo/virtualservices/mooit
+  UID:                 5f9df13a-1aaf-49d0-adb0-5facf314ab54
+Spec:
+  Gateways:
+    mooit-gateway
+  Hosts:
+    mooit.sablin.de
+    mooit
+  Http:
+    Retries:
+      Attempts:         3
+      Per Try Timeout:  1s
+      Retry On:         gateway-error,connect-failure,refused-stream
+    Route:
+      Destination:
+        Host:  mooit-primary
+      Weight:  100
+      Destination:
+        Host:  mooit-canary
+      Weight:  0
+Events:        <none>
+```
 
 # Выполнено ДЗ №10
 # Kubernetes Hashicorp Vault
