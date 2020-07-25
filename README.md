@@ -1,7 +1,8 @@
 # Выполнено ДЗ №12
-# Kubernetes Hashicorp Vault
+# Kubernetes Deep dive storage
 
  - [x] Основное ДЗ
+ - [x] Задание со *
 
 ## В процессе сделано:
 
@@ -391,6 +392,183 @@ drwxr-xr-x    2 root     root          22 Jul 25 08:14 .
 drwxr-xr-x    1 root     root          29 Jul 25 08:16 ..
 -rw-r--r--    1 root     root           0 Jul 25 07:50 test.txt
 ```
+
+**ISCSI provisiong**
+
+**Setup targetd iscsi server**
+
+Disable SELinux and check
+```bash
+grep disabled /etc/sysconfig/selinux
+```
+
+Disable firewall
+```bash
+systemctl disable firewalld
+systemctl stop firewalld
+```
+
+Install taregtd and targetcli
+```bash
+yum install targetd targetcli -y
+```
+
+Create a volume group for targetd
+```bash
+vgcreate vg-targetd /dev/sdb
+```
+
+Enable targetd RPC access.
+```bash
+vi /etc/target/targetd.yaml
+```
+
+```bash
+password: superpassword
+
+# defaults below; uncomment and edit
+#block_pools: [vg-targetd/thin_pool] # just 1 by default, but can be more
+#fs_pools: []  # Path to btrfs FS, eg. /my_btrfs_mount
+pool_name: vg-targetd
+user: admin
+ssl: false
+target_name: iqn.2020-07.org.linux-iscsi.k8s:targetd
+```
+
+Start and enable targetd
+```bash
+systemctl enable --now targetd
+```
+
+Check
+```bash
+[root@localhost ~]# systemctl status targetd
+● targetd.service - targetd storage array API daemon
+   Loaded: loaded (/usr/lib/systemd/system/targetd.service; enabled; vendor preset: disabled)
+   Active: active (running) since Сб 2020-07-25 19:07:14 CEST; 46s ago
+ Main PID: 9911 (targetd)
+    Tasks: 1
+   Memory: 10.3M
+   CGroup: /system.slice/targetd.service
+           └─9911 targetd
+
+июл 25 19:07:14 localhost systemd[1]: Started targetd storage array API daemon.
+июл 25 19:07:14 localhost targetd[9911]: INFO:root:started server (TLS no)
+```
+
+Setup worker nodes
+
+Install the iscsi-initiator-utils package on each node
+```bash
+sudo yum install -y iscsi-initiator-utils
+```
+
+To set a custom initiator name, edit the file /etc/iscsi/initiatorname.iscsi
+```bash
+InitiatorName=iqn.1994-05.com.redhat:node1
+```
+
+Restart iscsid.service
+```bash
+sudo systemctl restart iscsid
+```
+
+Create secret
+```bash
+kubectl create secret generic targetd-account --from-literal=username=admin --from-literal=password=superpassword
+```
+
+Download manifest
+```bash
+wget https://raw.githubusercontent.com/ansilh/kubernetes-the-hardway-virtualbox/master/config/iscsi-provisioner-d.yaml
+```
+
+Modify TARGETD_ADDRESS (also check apiVersions and nessesory permitions for serviceaccount in this manifest)
+
+Apply it
+```bash
+kubectl apply -f iscsi-provisioner-d.yaml 
+```
+
+Download and modify PersistentVolumeClaim and StorageClass
+```bash
+wget https://raw.githubusercontent.com/ansilh/kubernetes-the-hardway-virtualbox/master/config/iscsi-provisioner-class.yaml
+
+wget https://raw.githubusercontent.com/ansilh/kubernetes-the-hardway-virtualbox/master/config/iscsi-provisioner-pvc.yaml
+```
+
+```bash
+vi iscsi-provisioner-class.yaml
+```
+
+```bash
+  targetPortal: 10.20.0.31:3260 
+  iqn: iqn.2020-07.org.linux-iscsi.k8s:targetd
+  initiators: iqn.1994-05.com.redhat:node1,iqn.1994-05.com.redhat:node2,iqn.1994-05.com.redhat:node3
+```
+
+Apply it
+```bash
+kubectl apply -f iscsi-provisioner-class.yaml
+iscsi-provisioner-pvc.yaml
+```
+
+Check PVC
+```bash
+>>> kubectl get pvc                            
+NAME          STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS               AGE
+myclaim       Bound    pvc-3147f633-650b-4dd8-979a-3f677af9bccb   100Mi      RWO            iscsi-targetd-vg-targetd   8s
+```
+
+And PV
+```bash
+>>> kubectl get pv 
+NAME                                       CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM                 STORAGECLASS               REASON   AGE
+pvc-3147f633-650b-4dd8-979a-3f677af9bccb   100Mi      RWO            Delete           Bound    default/myclaim       iscsi-targetd-vg-targetd            5m5s
+```
+
+On iscsi server
+```bash
+[root@localhost ~]# targetcli ls
+Warning: Could not load preferences file /root/.targetcli/prefs.bin.
+o- / ......................................................................................................................... [...]
+  o- backstores .............................................................................................................. [...]
+  | o- block .................................................................................................. [Storage Objects: 1]
+  | | o- vg-targetd:pvc-3147f633-650b-4dd8-979a-3f677af9bccb  [/dev/vg-targetd/pvc-3147f633-650b-4dd8-979a-3f677af9bccb (100.0MiB) write-thru activated]
+  | |   o- alua ................................................................................................... [ALUA Groups: 1]
+  | |     o- default_tg_pt_gp ....................................................................... [ALUA state: Active/optimized]
+  | o- fileio ................................................................................................. [Storage Objects: 0]
+  | o- pscsi .................................................................................................. [Storage Objects: 0]
+  | o- ramdisk ................................................................................................ [Storage Objects: 0]
+  o- iscsi ............................................................................................................ [Targets: 1]
+  | o- iqn.2020-07.org.linux-iscsi.k8s:targetd ........................................................................... [TPGs: 1]
+  |   o- tpg1 ............................................................................................... [no-gen-acls, no-auth]
+  |     o- acls .......................................................................................................... [ACLs: 3]
+  |     | o- iqn.1994-05.com.redhat:node1 ......................................................................... [Mapped LUNs: 1]
+  |     | | o- mapped_lun0 ................................... [lun0 block/vg-targetd:pvc-3147f633-650b-4dd8-979a-3f677af9bccb (rw)]
+  |     | o- iqn.1994-05.com.redhat:node2 ......................................................................... [Mapped LUNs: 1]
+  |     | | o- mapped_lun0 ................................... [lun0 block/vg-targetd:pvc-3147f633-650b-4dd8-979a-3f677af9bccb (rw)]
+  |     | o- iqn.1994-05.com.redhat:node3 ......................................................................... [Mapped LUNs: 1]
+  |     |   o- mapped_lun0 ................................... [lun0 block/vg-targetd:pvc-3147f633-650b-4dd8-979a-3f677af9bccb (rw)]
+  |     o- luns .......................................................................................................... [LUNs: 1]
+  |     | o- lun0  [block/vg-targetd:pvc-3147f633-650b-4dd8-979a-3f677af9bccb (/dev/vg-targetd/pvc-3147f633-650b-4dd8-979a-3f677af9bccb) (default_tg_pt_gp)]
+  |     o- portals .................................................................................................... [Portals: 1]
+  |       o- 0.0.0.0:3260 ..................................................................................................... [OK]
+  o- loopback ......................................................................................................... [Targets: 0]
+```
+
+```bash
+[root@localhost ~]# lvs
+  LV                                       VG         Attr       LSize   Pool Origin Data%  Meta%  Move Log Cpy%Sync Convert
+  root                                     centos     -wi-ao----  28,99g
+  swap                                     centos     -wi-ao----   2,00g
+  pvc-3147f633-650b-4dd8-979a-3f677af9bccb vg-targetd -wi-ao---- 100,00m
+```
+
+More details can be found in below URLs
+
+https://github.com/kubernetes-incubator/external-storage/tree/master/iscsi/targetd 
+https://github.com/kubernetes-incubator/external-storage/tree/master/iscsi/targetd/kubernetes
 
 # Выполнено ДЗ №11
 # Kubernetes GitOps
