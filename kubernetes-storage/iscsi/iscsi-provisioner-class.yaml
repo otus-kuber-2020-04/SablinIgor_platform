@@ -1,0 +1,26 @@
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: iscsi-targetd-vg-targetd
+provisioner: iscsi-targetd
+parameters:
+# this id where the iscsi server is running
+  targetPortal: 10.20.0.31:3260
+
+# this is the iscsi server iqn
+  iqn: iqn.2020-07.org.linux-iscsi.k8s:targetd
+
+# this is the iscsi interface to be used, the default is default
+# iscsiInterface: default
+
+# this must be on eof the volume groups condifgured in targed.yaml, the default is vg-targetd
+# volumeGroup: vg-targetd
+
+# this is a comma separated list of initiators that will be give access to the created volumes, they must correspond to what you have configured in your nodes.
+  initiators: iqn.1994-05.com.redhat:node1,iqn.1994-05.com.redhat:node2,iqn.1994-05.com.redhat:node3
+
+# whether or not to use chap authentication for discovery operations
+  chapAuthDiscovery: "false"
+
+# whether or not to use chap authentication for session operations
+  chapAuthSession: "false"
