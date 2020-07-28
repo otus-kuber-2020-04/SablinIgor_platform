@@ -5,7 +5,7 @@ metadata:
 spec:
   containers:
     - name: my-pod
-      image: bash
+      image: nginx
       volumeMounts:
       - mountPath: "/data"
         name: my-csi-volume
