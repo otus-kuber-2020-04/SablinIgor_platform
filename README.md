@@ -2,6 +2,66 @@
 # Kubernetes Deep dive storage
 
  - [x] Основное ДЗ
+ 
+## В процессе сделано:
+
+### strace
+
+```bash
+brew install aylei/tap/kubectl-debug
+```
+
+```bash
+kubectl apply -f strace/debug-agent.yml
+```
+
+```bash
+kubectl debug --agentless=false nginx
+```
+
+```bash
+bash-5.0# strace -p 101
+strace: test_ptrace_get_syscall_info: PTRACE_TRACEME: Operation not permitted
+strace: attach: ptrace(PTRACE_ATTACH, 101): Operation not permitted
+```
+
+```bash
+bash-5.0# strace -p 28
+strace: Process 28 attached
+epoll_wait(10, [{EPOLLIN, {u32=700669968, u64=140068174127120}}], 512, -1) = 1
+accept4(7, {sa_family=AF_INET, sin_port=htons(43862), sin_addr=inet_addr("127.0.0.1")}, [112->16], SOCK_NONBLOCK) = 4
+epoll_ctl(10, EPOLL_CTL_ADD, 4, {EPOLLIN|EPOLLRDHUP|EPOLLET, {u32=700670664, u64=140068174127816}}) = 0
+epoll_wait(10, [{EPOLLIN, {u32=700670664, u64=140068174127816}}], 512, 60000) = 1
+recvfrom(4, "GET / HTTP/1.1\r\nHost: localhost\r"..., 1024, 0, NULL, NULL) = 73
+stat("/usr/share/nginx/html/index.html", {st_mode=S_IFREG|0644, st_size=612, ...}) = 0
+openat(AT_FDCWD, "/usr/share/nginx/html/index.html", O_RDONLY|O_NONBLOCK) = 13
+fstat(13, {st_mode=S_IFREG|0644, st_size=612, ...}) = 0
+writev(4, [{iov_base="HTTP/1.1 200 OK\r\nServer: nginx/1"..., iov_len=238}], 1) = 238
+sendfile(4, 13, [0] => [612], 612)      = 612
+write(6, "127.0.0.1 - - [31/Jul/2020:18:38"..., 90) = 90
+close(13)                               = 0
+setsockopt(4, SOL_TCP, TCP_NODELAY, [1], 4) = 0
+epoll_wait(10, [{EPOLLIN|EPOLLRDHUP, {u32=700670664, u64=140068174127816}}], 512, 65000) = 1
+recvfrom(4, "", 1024, 0, NULL, NULL)    = 0
+close(4)                                = 0
+epoll_wait(10, 
+```
+
+kubectl-debug/pkg/agent/runtime.go
+```golang
+CapAdd:      strslice.StrSlice([]string{"SYS_PTRACE", "SYS_ADMIN"}),
+```
+
+Use
+aylei/debug-agent:**v0.1.1**
+
+### kit
+
+
+# Выполнено ДЗ №12
+# Kubernetes Deep dive storage
+
+ - [x] Основное ДЗ
  - [x] Задание со *
 
 ## В процессе сделано:
