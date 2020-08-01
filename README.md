@@ -1,5 +1,5 @@
 # Выполнено ДЗ №13
-# Kubernetes Deep dive storage
+# Kubernetes Debug
 
  - [x] Основное ДЗ
  
