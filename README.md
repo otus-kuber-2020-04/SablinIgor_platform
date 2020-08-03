@@ -1,3 +1,272 @@
+# Выполнено ДЗ №13
+# Kubernetes Debug
+
+ - [x] Основное ДЗ
+ 
+## В процессе сделано:
+
+### strace
+
+Пока не вышла версия k8s 1.19 пользуемся велосипедами.
+Установим плагин. 
+```bash
+brew install aylei/tap/kubectl-debug
+```
+
+Агента в кластер.
+```bash
+kubectl apply -f strace/debug-agent.yml
+```
+
+Попытаемся им воспользваться.
+```bash
+kubectl debug --agentless=false nginx
+```
+
+Мы попали в пространство под-а и попытаемся воспользоваться утилитой strace. 
+```bash
+bash-5.0# strace -p 101
+strace: test_ptrace_get_syscall_info: PTRACE_TRACEME: Operation not permitted
+strace: attach: ptrace(PTRACE_ATTACH, 101): Operation not permitted
+```
+
+Обломались. Операция не дозволена, так как не хватает ряда привилегий.
+
+К счастью, автор позаботился о нас и выпустил исправленную версию (v0.1.1)
+
+Воспользуемся ей и посмотрим на результат
+```bash
+      containers:
+      - image: aylei/debug-agent:v0.1.1
+```
+
+```bash
+bash-5.0# strace -p 28
+strace: Process 28 attached
+epoll_wait(10, [{EPOLLIN, {u32=700669968, u64=140068174127120}}], 512, -1) = 1
+accept4(7, {sa_family=AF_INET, sin_port=htons(43862), sin_addr=inet_addr("127.0.0.1")}, [112->16], SOCK_NONBLOCK) = 4
+epoll_ctl(10, EPOLL_CTL_ADD, 4, {EPOLLIN|EPOLLRDHUP|EPOLLET, {u32=700670664, u64=140068174127816}}) = 0
+epoll_wait(10, [{EPOLLIN, {u32=700670664, u64=140068174127816}}], 512, 60000) = 1
+recvfrom(4, "GET / HTTP/1.1\r\nHost: localhost\r"..., 1024, 0, NULL, NULL) = 73
+stat("/usr/share/nginx/html/index.html", {st_mode=S_IFREG|0644, st_size=612, ...}) = 0
+openat(AT_FDCWD, "/usr/share/nginx/html/index.html", O_RDONLY|O_NONBLOCK) = 13
+fstat(13, {st_mode=S_IFREG|0644, st_size=612, ...}) = 0
+writev(4, [{iov_base="HTTP/1.1 200 OK\r\nServer: nginx/1"..., iov_len=238}], 1) = 238
+sendfile(4, 13, [0] => [612], 612)      = 612
+write(6, "127.0.0.1 - - [31/Jul/2020:18:38"..., 90) = 90
+close(13)                               = 0
+setsockopt(4, SOL_TCP, TCP_NODELAY, [1], 4) = 0
+epoll_wait(10, [{EPOLLIN|EPOLLRDHUP, {u32=700670664, u64=140068174127816}}], 512, 65000) = 1
+recvfrom(4, "", 1024, 0, NULL, NULL)    = 0
+close(4)                                = 0
+epoll_wait(10, 
+```
+
+Совсем другое дело.
+
+Исправлено было следующее:
+
+kubectl-debug/pkg/agent/runtime.go
+```golang
+CapAdd:      strslice.StrSlice([]string{"SYS_PTRACE", "SYS_ADMIN"}),
+```
+
+### kit
+
+В GKE поднят кластер  K8S версии 1.15.12.
+
+```bash
+gcloud container clusters get-credentials cluster-otus --zone europe-west1-c --project sharp-haven-274816 
+```
+
+Deploy netperf-operator
+```bash
+kubectl apply -f deploy/crd.yml 
+kubectl apply -f deploy/rbac.yml 
+kubectl apply -f deploy/operator.yml
+```
+
+Check
+```bash
+>>> kubectl get po                      
+NAME                                READY   STATUS    RESTARTS   AGE
+netperf-operator-74585bcfc4-svczf   1/1     Running   0          6s
+
+>>> kubectl logs netperf-operator-74585bcfc4-svczf 
+time="2020-08-01T10:43:15Z" level=info msg="Go Version: go1.10.1"
+time="2020-08-01T10:43:15Z" level=info msg="Go OS/Arch: linux/amd64"
+time="2020-08-01T10:43:15Z" level=info msg="operator-sdk Version: 0.0.5+git"
+time="2020-08-01T10:43:15Z" level=info msg="Netperf-operator Version: 0.1.1"
+time="2020-08-01T10:43:15Z" level=info msg="Watching app.example.com/v1alpha1, Netperf, default, 5"
+time="2020-08-01T10:43:15Z" level=info msg="starting pods controller"
+time="2020-08-01T10:43:15Z" level=info msg="starting netperfs controller"
+```
+
+Start test
+```bash
+kubectl apply -f deploy/cr.yml 
+```
+
+Check
+```bash
+>>> kubectl get po                                
+NAME                                READY   STATUS              RESTARTS   AGE
+netperf-client-81bd34fb64da         0/1     ContainerCreating   0          2s
+netperf-operator-74585bcfc4-svczf   1/1     Running             0          10m
+netperf-server-81bd34fb64da         1/1     Running             0          6s
+```
+
+Через некоторое время поды исчезают
+```bash
+>>> kubectl get po
+NAME                                READY   STATUS        RESTARTS   AGE
+netperf-operator-74585bcfc4-svczf   1/1     Running       0          11m
+netperf-server-81bd34fb64da         0/1     Terminating   0          50s
+
+>>> kubectl get po
+NAME                                READY   STATUS    RESTARTS   AGE
+netperf-operator-74585bcfc4-svczf   1/1     Running   0          11m
+```
+
+Однако результат "теста" получить все еще можно
+```bash
+>>> kubectl describe netperf.app.example.com/example
+Name:         example
+Namespace:    default
+Labels:       <none>
+Annotations:  kubectl.kubernetes.io/last-applied-configuration:
+                {"apiVersion":"app.example.com/v1alpha1","kind":"Netperf","metadata":{"annotations":{},"name":"example","namespace":"default"}}
+API Version:  app.example.com/v1alpha1
+Kind:         Netperf
+Metadata:
+  Creation Timestamp:  2020-08-01T10:53:35Z
+  Generation:          4
+  Resource Version:    4818
+  Self Link:           /apis/app.example.com/v1alpha1/namespaces/default/netperfs/example
+  UID:                 45debaf5-66c1-45e2-9768-81bd34fb64da
+Spec:
+  Client Node:  
+  Server Node:  
+Status:
+  Client Pod:          netperf-client-81bd34fb64da
+  Server Pod:          netperf-server-81bd34fb64da
+  Speed Bits Per Sec:  1669.63
+  Status:              Done
+Events:                <none>
+```
+
+Apply network policy
+```bash
+>>> kubectl apply -f netperf-calico-policy.yml      
+networkpolicy.crd.projectcalico.org/netperf-calico-policy created
+```
+
+Delere resource
+```bash
+kubectl delete -f deploy/cr.yml
+```
+
+Start again
+```bash
+kubectl apply -f deploy/cr.yml
+```
+
+Test hanged
+```bash
+>>> kubectl describe netperf.app.example.com/example
+Name:         example
+Namespace:    default
+Labels:       <none>
+Annotations:  kubectl.kubernetes.io/last-applied-configuration:
+                {"apiVersion":"app.example.com/v1alpha1","kind":"Netperf","metadata":{"annotations":{},"name":"example","namespace":"default"}}
+API Version:  app.example.com/v1alpha1
+Kind:         Netperf
+Metadata:
+  Creation Timestamp:  2020-08-01T11:03:03Z
+  Generation:          3
+  Resource Version:    7015
+  Self Link:           /apis/app.example.com/v1alpha1/namespaces/default/netperfs/example
+  UID:                 3f2f4561-49bb-40a6-9951-16fb628610e5
+Spec:
+  Client Node:  
+  Server Node:  
+Status:
+  Client Pod:          netperf-client-16fb628610e5
+  Server Pod:          netperf-server-16fb628610e5
+  Speed Bits Per Sec:  0
+  Status:              Started test
+Events:                <none>
+```
+
+На ноде с клиентом
+```bash
+gke-cluster-otus-default-pool-daed5b4d-1m59 ~ # journalctl -k | grep calico
+Aug 01 11:03:09 gke-cluster-otus-default-pool-daed5b4d-1m59 kernel: calico-packet: IN=caliaa1a1b5e562 OUT=eth0 MAC=ee:ee:ee:ee:ee:ee:b6:57:4a:fa:8c:dd:08:00 SRC=10.60.1.
+6 DST=10.60.0.10 LEN=60 TOS=0x00 PREC=0x00 TTL=63 ID=58736 DF PROTO=TCP SPT=53443 DPT=12865 WINDOW=42600 RES=0x00 SYN URGP=0 
+Aug 01 11:03:10 gke-cluster-otus-default-pool-daed5b4d-1m59 kernel: calico-packet: IN=caliaa1a1b5e562 OUT=eth0 MAC=ee:ee:ee:ee:ee:ee:b6:57:4a:fa:8c:dd:08:00 SRC=10.60.1.
+6 DST=10.60.0.10 LEN=60 TOS=0x00 PREC=0x00 TTL=63 ID=58737 DF PROTO=TCP SPT=53443 DPT=12865 WINDOW=42600 RES=0x00 SYN URGP=0 
+Aug 01 11:03:12 gke-cluster-otus-default-pool-daed5b4d-1m59 kernel: calico-packet: IN=caliaa1a1b5e562 OUT=eth0 MAC=ee:ee:ee:ee:ee:ee:b6:57:4a:fa:8c:dd:08:00 SRC=10.60.1.
+6 DST=10.60.0.10 LEN=60 TOS=0x00 PREC=0x00 TTL=63 ID=58738 DF PROTO=TCP SPT=53443 DPT=12865 WINDOW=42600 RES=0x00 SYN URGP=0 
+...
+```
+
+Чтобы не лазить по ssh воспользуемся специальным инструментом iptables-tailer
+
+Apply iptables-tailer
+```bash
+kubectl apply -f iptables-tailer.yml
+```
+
+Результат
+```bash
+>>> kubectl describe ds kube-iptables-tailer  -n kube-system
+...
+Events:
+  Type     Reason        Age                   From                  Message
+  ----     ------        ----                  ----                  -------
+  Warning  FailedCreate  63s (x16 over 3m47s)  daemonset-controller  Error creating: pods "kube-iptables-tailer-" is forbidden: error looking up service account kube-system/kube-iptables-tailer: serviceaccount "kube-iptables-tailer" not found
+```
+
+Нужен service account.
+Найдем его среди прочих манифестов.
+
+```bash
+kubectl apply -f kit-serviceaccount.yml
+kubectl apply -f kit-clusterrole.yml
+kubectl apply -f kit-clusterrolebinding.yml
+```
+
+Передеплоим демонсет
+```bash
+kubectl delete -f iptables-tailer.yml
+kubectl apply -f iptables-tailer.yml
+```
+
+На этот раз все хорошо
+```bash
+>>> kubectl get ds -n kube-system | grep kube-iptables-tailer
+kube-iptables-tailer       3         3         3       3            3           <none>         2m22s
+```
+
+В описании подов видим искомое - информацию о прибитых пакетах.
+```bash
+>>> kubectl describe pod --selector=app=netperf-operator
+
+...
+
+Name:           netperf-server-e881d3f546a4
+...
+Events:
+  Type     Reason      Age    From                                                  Message
+  ----     ------      ----   ----                                                  -------
+  Normal   Scheduled   4m56s  default-scheduler                                     Successfully assigned default/netperf-server-e881d3f546a4 to gke-cluster-otus-default-pool-daed5b4d-txpd
+  Normal   Pulled      4m55s  kubelet, gke-cluster-otus-default-pool-daed5b4d-txpd  Container image "tailoredcloud/netperf:v2.7" already present on machine
+  Normal   Created     4m55s  kubelet, gke-cluster-otus-default-pool-daed5b4d-txpd  Created container netperf-server-e881d3f546a4
+  Normal   Started     4m55s  kubelet, gke-cluster-otus-default-pool-daed5b4d-txpd  Started container netperf-server-e881d3f546a4
+  Warning  PacketDrop  4m53s  kube-iptables-tailer                                  Packet dropped when receiving traffic from 10.60.0.12
+  Warning  PacketDrop  2m39s  kube-iptables-tailer                                  Packet dropped when receiving traffic from client (10.60.0.12)
+```
+
 # Выполнено ДЗ №12
 # Kubernetes Deep dive storage
 
