@@ -1,3 +1,479 @@
+# Выполнено ДЗ №14
+# Kubernetes Production clusters
+
+ - [x] Основное ДЗ
+ - [x] Задание со *
+ 
+## В процессе сделано:
+
+Устанавливать Кубернетес будем на виртуальные машины KVM (это проще и надежнее, чем заморачиваться с GCP)
+```bash
+$ virsh list
+ Id    Name                           State
+----------------------------------------------------
+ 65    k8smaster01                    running
+ 66    k8smaster02                    running
+ 67    k8smaster03                    running
+ 68    k8sworker01                    running
+ 69    k8sworker02                    running
+ 70    k8sworker03                    running
+```
+
+**Kubeadm**
+
+На каждом узле выполним предварительную настройку при помощи скрипта provision_k8s.sh (swap на виртуалках заранее отключен)
+
+```bash
+#!/bin/bash
+
+cat > /etc/sysctl.d/99-kubernetes-cri.conf <<EOF
+net.bridge.bridge-nf-call-iptables = 1
+net.ipv4.ip_forward = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+EOF
+
+sysctl --system
+
+sudo yum install -y yum-utils
+
+sudo yum-config-manager \
+    --add-repo \
+    https://download.docker.com/linux/centos/docker-ce.repo
+
+sudo yum install docker-ce docker-ce-cli containerd.io -y
+
+systemctl enable --now docker
+
+cat > /etc/docker/daemon.json <<EOF
+{
+"exec-opts": ["native.cgroupdriver=systemd"],
+"log-driver": "json-file",
+"log-opts": {
+"max-size": "100m"
+},
+"storage-driver": "overlay2"
+}
+EOF
+
+systemctl restart docker
+
+cat <<EOF | sudo tee /etc/yum.repos.d/kubernetes.repo
+[kubernetes]
+name=Kubernetes
+baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-\$basearch
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+exclude=kubelet kubeadm kubectl
+EOF
+
+sudo setenforce 0
+sudo sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
+
+sudo yum install -y kubelet-1.17.4 kubeadm-1.17.4 kubectl-1.17.4 --disableexcludes=kubernetes
+
+sudo systemctl enable --now kubelet
+```
+
+Поднимим первый мастер
+```bash
+$ kubeadm init --pod-network-cidr=192.168.0.0/24
+I0808 16:32:19.915504   21177 version.go:251] remote version is much newer: v1.18.6; falling back to: stable-1.17
+W0808 16:32:20.336479   21177 validation.go:28] Cannot validate kubelet config - no validator is available
+W0808 16:32:20.336506   21177 validation.go:28] Cannot validate kube-proxy config - no validator is available
+[init] Using Kubernetes version: v1.17.9
+[preflight] Running pre-flight checks
+[preflight] Pulling images required for setting up a Kubernetes cluster
+[preflight] This might take a minute or two, depending on the speed of your internet connection
+[preflight] You can also perform this action in beforehand using 'kubeadm config images pull'
+[kubelet-start] Writing kubelet environment file with flags to file "/var/lib/kubelet/kubeadm-flags.env"
+[kubelet-start] Writing kubelet configuration to file "/var/lib/kubelet/config.yaml"
+[kubelet-start] Starting the kubelet
+[certs] Using certificateDir folder "/etc/kubernetes/pki"
+[certs] Generating "ca" certificate and key
+[certs] Generating "apiserver" certificate and key
+[certs] apiserver serving cert is signed for DNS names [ctest1.example.com kubernetes kubernetes.default kubernetes.default.svc kubernetes.default.svc.cluster.local] and IPs [10.96.0.1 192.168.122.160]
+[certs] Generating "apiserver-kubelet-client" certificate and key
+[certs] Generating "front-proxy-ca" certificate and key
+[certs] Generating "front-proxy-client" certificate and key
+[certs] Generating "etcd/ca" certificate and key
+[certs] Generating "etcd/server" certificate and key
+[certs] etcd/server serving cert is signed for DNS names [ctest1.example.com localhost] and IPs [192.168.122.160 127.0.0.1 ::1]
+[certs] Generating "etcd/peer" certificate and key
+[certs] etcd/peer serving cert is signed for DNS names [ctest1.example.com localhost] and IPs [192.168.122.160 127.0.0.1 ::1]
+[certs] Generating "etcd/healthcheck-client" certificate and key
+[certs] Generating "apiserver-etcd-client" certificate and key
+[certs] Generating "sa" key and public key
+[kubeconfig] Using kubeconfig folder "/etc/kubernetes"
+[kubeconfig] Writing "admin.conf" kubeconfig file
+[kubeconfig] Writing "kubelet.conf" kubeconfig file
+[kubeconfig] Writing "controller-manager.conf" kubeconfig file
+[kubeconfig] Writing "scheduler.conf" kubeconfig file
+[control-plane] Using manifest folder "/etc/kubernetes/manifests"
+[control-plane] Creating static Pod manifest for "kube-apiserver"
+[control-plane] Creating static Pod manifest for "kube-controller-manager"
+W0808 16:33:12.331487   21177 manifests.go:214] the default kube-apiserver authorization-mode is "Node,RBAC"; using "Node,RBAC"
+[control-plane] Creating static Pod manifest for "kube-scheduler"
+W0808 16:33:12.334663   21177 manifests.go:214] the default kube-apiserver authorization-mode is "Node,RBAC"; using "Node,RBAC"
+[etcd] Creating static Pod manifest for local etcd in "/etc/kubernetes/manifests"
+[wait-control-plane] Waiting for the kubelet to boot up the control plane as static Pods from directory "/etc/kubernetes/manifests". This can take up to 4m0s
+[kubelet-check] Initial timeout of 40s passed.
+[apiclient] All control plane components are healthy after 40.007476 seconds
+[upload-config] Storing the configuration used in ConfigMap "kubeadm-config" in the "kube-system" Namespace
+[kubelet] Creating a ConfigMap "kubelet-config-1.17" in namespace kube-system with the configuration for the kubelets in the cluster
+[upload-certs] Skipping phase. Please see --upload-certs
+[mark-control-plane] Marking the node ctest1.example.com as control-plane by adding the label "node-role.kubernetes.io/master=''"
+[mark-control-plane] Marking the node ctest1.example.com as control-plane by adding the taints [node-role.kubernetes.io/master:NoSchedule]
+[bootstrap-token] Using token: sv0jsp.1wj56ucc7230gdxt
+[bootstrap-token] Configuring bootstrap tokens, cluster-info ConfigMap, RBAC Roles
+[bootstrap-token] configured RBAC rules to allow Node Bootstrap tokens to post CSRs in order for nodes to get long term certificate credentials
+[bootstrap-token] configured RBAC rules to allow the csrapprover controller automatically approve CSRs from a Node Bootstrap Token
+[bootstrap-token] configured RBAC rules to allow certificate rotation for all node client certificates in the cluster
+[bootstrap-token] Creating the "cluster-info" ConfigMap in the "kube-public" namespace
+[kubelet-finalize] Updating "/etc/kubernetes/kubelet.conf" to point to a rotatable kubelet client certificate and key
+[addons] Applied essential addon: CoreDNS
+[addons] Applied essential addon: kube-proxy
+
+Your Kubernetes control-plane has initialized successfully!
+
+To start using your cluster, you need to run the following as a regular user:
+
+  mkdir -p $HOME/.kube
+  sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+  sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+You should now deploy a pod network to the cluster.
+Run "kubectl apply -f [podnetwork].yaml" with one of the options listed at:
+  https://kubernetes.io/docs/concepts/cluster-administration/addons/
+
+Then you can join any number of worker nodes by running the following on each as root:
+
+kubeadm join 192.168.122.160:6443 --token tgjyj0.rzzut4sdy5219y6i \
+    --discovery-token-ca-cert-hash sha256:2fd8f0e2704721271fdb380d80eb2d5085da97017cceeb0d446440de83cdc1d9
+```
+
+```bash
+$ mkdir -p $HOME/.kube
+$ sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+$ sudo chown $(id -u):$(id -g) $HOME/.kube/config
+```
+
+Install Calico
+```bash
+kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
+
+NAMESPACE     NAME                                         READY   STATUS    RESTARTS   AGE
+kube-system   calico-kube-controllers-59d85c5c84-fvbqv     1/1     Running   0          69s
+kube-system   calico-node-jnqb5                            1/1     Running   0          69s
+kube-system   coredns-6955765f44-6dmct                     1/1     Running   0          3m52s
+kube-system   coredns-6955765f44-szpjd                     1/1     Running   0          3m52s
+kube-system   etcd-ctest1.example.com                      1/1     Running   0          3m45s
+kube-system   kube-apiserver-ctest1.example.com            1/1     Running   0          3m45s
+kube-system   kube-controller-manager-ctest1.example.com   1/1     Running   0          3m45s
+kube-system   kube-proxy-7fhr6                             1/1     Running   0          3m52s
+kube-system   kube-scheduler-ctest1.example.com            1/1     Running   0          3m45s
+```
+
+Добавим в кластер рабочие узлы
+
+На каждом рабочем узле выполним
+```bash
+$ kubeadm join 192.168.122.160:6443 --token sv0jsp.1wj56ucc7230gdxt \
+>     --discovery-token-ca-cert-hash sha256:1667f8a40ebe4396454a802a9f37a058f6c1978373ac555e8a8ad0876609b10a
+W0808 16:40:44.194536   21244 join.go:346] [preflight] WARNING: JoinControlPane.controlPlane settings will be ignored when control-plane flag is not set.
+[preflight] Running pre-flight checks
+[preflight] Reading configuration from the cluster...
+[preflight] FYI: You can look at this config file with 'kubectl -n kube-system get cm kubeadm-config -oyaml'
+[kubelet-start] Downloading configuration for the kubelet from the "kubelet-config-1.17" ConfigMap in the kube-system namespace
+[kubelet-start] Writing kubelet configuration to file "/var/lib/kubelet/config.yaml"
+[kubelet-start] Writing kubelet environment file with flags to file "/var/lib/kubelet/kubeadm-flags.env"
+[kubelet-start] Starting the kubelet
+[kubelet-start] Waiting for the kubelet to perform the TLS Bootstrap...
+
+This node has joined the cluster:
+* Certificate signing request was sent to apiserver and a response was received.
+* The Kubelet was informed of the new secure connection details.
+
+Run 'kubectl get nodes' on the control-plane to see this node join the cluster.
+```
+
+Проверим статус кластера
+```bash
+NAME                      STATUS   ROLES    AGE     VERSION
+k8smaster01.example.com   Ready    master   29m     v1.17.4
+k8sworker01.example.com   Ready    <none>   3m13s   v1.17.4
+k8sworker02.example.com   Ready    <none>   96s     v1.17.4
+k8sworker03.example.com   Ready    <none>   54s     v1.17.4
+```
+
+Установим приложение
+```bash
+kubectl apply -f deployment.yaml
+
+NAME                               READY   STATUS    RESTARTS   AGE
+nginx-deployment-c8fd555cc-9h6fw   1/1     Running   0          45s
+nginx-deployment-c8fd555cc-mz4cp   1/1     Running   0          45s
+nginx-deployment-c8fd555cc-nv5qk   1/1     Running   0          45s
+nginx-deployment-c8fd555cc-q8jjn   1/1     Running   0          45s
+```
+
+Upgrade cluster
+
+Сначала обновим версию на мастер-узле
+
+Обновим версии пакетов
+```bash
+sudo yum install -y kubelet-1.18.0 kubeadm-1.18.0 kubectl-1.18.0 --disableexcludes=kubernetes
+```
+
+Выведем ноду из эксплуатации
+```bash
+kubectl drain k8smaster01.example.com --ignore-daemonsets
+```
+
+Выполним обновление
+```bash
+$ sudo kubeadm upgrade plan 1.18.0
+[upgrade/config] Making sure the configuration is correct:
+[upgrade/config] Reading configuration from the cluster...
+[upgrade/config] FYI: You can look at this config file with 'kubectl -n kube-system get cm kubeadm-config -oyaml'
+[preflight] Running pre-flight checks.
+[upgrade] Running cluster health checks
+[upgrade] Fetching available versions to upgrade to
+[upgrade/versions] Cluster version: v1.17.9
+[upgrade/versions] kubeadm version: v1.18.0
+[upgrade/versions] Latest stable version: 1.18.0
+[upgrade/versions] Latest version in the v1.17 series: 1.18.0
+
+Components that must be upgraded manually after you have upgraded the control plane with 'kubeadm upgrade apply':
+COMPONENT   CURRENT       AVAILABLE
+Kubelet     3 x v1.17.4   1.18.0
+            1 x v1.18.0   1.18.0
+
+Upgrade to the latest version in the v1.17 series:
+
+COMPONENT            CURRENT   AVAILABLE
+API Server           v1.17.9   1.18.0
+Controller Manager   v1.17.9   1.18.0
+Scheduler            v1.17.9   1.18.0
+Kube Proxy           v1.17.9   1.18.0
+CoreDNS              1.6.5     1.6.7
+Etcd                 3.4.3     3.4.3-0
+
+You can now apply the upgrade by executing the following command:
+
+	kubeadm upgrade apply 1.18.0
+
+$ sudo kubeadm upgrade apply v1.18.0
+[upgrade/config] Making sure the configuration is correct:
+[upgrade/config] Reading configuration from the cluster...
+[upgrade/config] FYI: You can look at this config file with 'kubectl -n kube-system get cm kubeadm-config -oyaml'
+[preflight] Running pre-flight checks.
+[upgrade] Running cluster health checks
+[upgrade/version] You have chosen to change the cluster version to "v1.18.0"
+[upgrade/versions] Cluster version: v1.17.9
+[upgrade/versions] kubeadm version: v1.18.0
+[upgrade/confirm] Are you sure you want to proceed with the upgrade? [y/N]: y
+[upgrade/prepull] Will prepull images for components [kube-apiserver kube-controller-manager kube-scheduler etcd]
+[upgrade/prepull] Prepulling image for component etcd.
+[upgrade/prepull] Prepulling image for component kube-apiserver.
+[upgrade/prepull] Prepulling image for component kube-controller-manager.
+[upgrade/prepull] Prepulling image for component kube-scheduler.
+[apiclient] Found 1 Pods for label selector k8s-app=upgrade-prepull-kube-apiserver
+[apiclient] Found 0 Pods for label selector k8s-app=upgrade-prepull-etcd
+[apiclient] Found 1 Pods for label selector k8s-app=upgrade-prepull-kube-scheduler
+[apiclient] Found 1 Pods for label selector k8s-app=upgrade-prepull-kube-controller-manager
+[apiclient] Found 1 Pods for label selector k8s-app=upgrade-prepull-etcd
+[upgrade/prepull] Prepulled image for component etcd.
+[upgrade/prepull] Prepulled image for component kube-apiserver.
+[upgrade/prepull] Prepulled image for component kube-scheduler.
+[upgrade/prepull] Prepulled image for component kube-controller-manager.
+[upgrade/prepull] Successfully prepulled the images for all the control plane components
+[upgrade/apply] Upgrading your Static Pod-hosted control plane to version "v1.18.0"...
+Static pod: kube-apiserver-k8smaster01.example.com hash: cefb5d1c55fdb771cd6034e56caa4a42
+Static pod: kube-controller-manager-k8smaster01.example.com hash: f8e08832fa70af7a7a54a6c16db3e04b
+Static pod: kube-scheduler-k8smaster01.example.com hash: 3912a792d8cd88cb34cc08c7fdcd78ac
+[upgrade/etcd] Upgrading to TLS for etcd
+[upgrade/etcd] Non fatal issue encountered during upgrade: the desired etcd version for this Kubernetes version "v1.18.0" is "3.4.3-0", but the current etcd version is "3.4.3". Won't downgrade etcd, instead just continue
+[upgrade/staticpods] Writing new Static Pod manifests to "/etc/kubernetes/tmp/kubeadm-upgraded-manifests400695953"
+W0809 05:22:58.772466   31659 manifests.go:225] the default kube-apiserver authorization-mode is "Node,RBAC"; using "Node,RBAC"
+[upgrade/staticpods] Preparing for "kube-apiserver" upgrade
+[upgrade/staticpods] Renewing apiserver certificate
+[upgrade/staticpods] Renewing apiserver-kubelet-client certificate
+[upgrade/staticpods] Renewing front-proxy-client certificate
+[upgrade/staticpods] Renewing apiserver-etcd-client certificate
+[upgrade/staticpods] Moved new manifest to "/etc/kubernetes/manifests/kube-apiserver.yaml" and backed up old manifest to "/etc/kubernetes/tmp/kubeadm-backup-manifests-2020-08-09-05-22-57/kube-apiserver.yaml"
+[upgrade/staticpods] Waiting for the kubelet to restart the component
+[upgrade/staticpods] This might take a minute or longer depending on the component/version gap (timeout 5m0s)
+Static pod: kube-apiserver-k8smaster01.example.com hash: cefb5d1c55fdb771cd6034e56caa4a42
+Static pod: kube-apiserver-k8smaster01.example.com hash: 0025cea1617e7f200d6d3196f4096d78
+[apiclient] Found 1 Pods for label selector component=kube-apiserver
+[upgrade/staticpods] Component "kube-apiserver" upgraded successfully!
+[upgrade/staticpods] Preparing for "kube-controller-manager" upgrade
+[upgrade/staticpods] Renewing controller-manager.conf certificate
+[upgrade/staticpods] Moved new manifest to "/etc/kubernetes/manifests/kube-controller-manager.yaml" and backed up old manifest to "/etc/kubernetes/tmp/kubeadm-backup-manifests-2020-08-09-05-22-57/kube-controller-manager.yaml"
+[upgrade/staticpods] Waiting for the kubelet to restart the component
+[upgrade/staticpods] This might take a minute or longer depending on the component/version gap (timeout 5m0s)
+Static pod: kube-controller-manager-k8smaster01.example.com hash: f8e08832fa70af7a7a54a6c16db3e04b
+Static pod: kube-controller-manager-k8smaster01.example.com hash: 67d25d72dc7a139108bf36afeda1f930
+[apiclient] Found 1 Pods for label selector component=kube-controller-manager
+[upgrade/staticpods] Component "kube-controller-manager" upgraded successfully!
+[upgrade/staticpods] Preparing for "kube-scheduler" upgrade
+[upgrade/staticpods] Renewing scheduler.conf certificate
+[upgrade/staticpods] Moved new manifest to "/etc/kubernetes/manifests/kube-scheduler.yaml" and backed up old manifest to "/etc/kubernetes/tmp/kubeadm-backup-manifests-2020-08-09-05-22-57/kube-scheduler.yaml"
+[upgrade/staticpods] Waiting for the kubelet to restart the component
+[upgrade/staticpods] This might take a minute or longer depending on the component/version gap (timeout 5m0s)
+Static pod: kube-scheduler-k8smaster01.example.com hash: 3912a792d8cd88cb34cc08c7fdcd78ac
+Static pod: kube-scheduler-k8smaster01.example.com hash: 5795d0c442cb997ff93c49feeb9f6386
+[apiclient] Found 1 Pods for label selector component=kube-scheduler
+[upgrade/staticpods] Component "kube-scheduler" upgraded successfully!
+[upload-config] Storing the configuration used in ConfigMap "kubeadm-config" in the "kube-system" Namespace
+[kubelet] Creating a ConfigMap "kubelet-config-1.18" in namespace kube-system with the configuration for the kubelets in the cluster
+[kubelet-start] Downloading configuration for the kubelet from the "kubelet-config-1.18" ConfigMap in the kube-system namespace
+[kubelet-start] Writing kubelet configuration to file "/var/lib/kubelet/config.yaml"
+[bootstrap-token] configured RBAC rules to allow Node Bootstrap tokens to post CSRs in order for nodes to get long term certificate credentials
+[bootstrap-token] configured RBAC rules to allow the csrapprover controller automatically approve CSRs from a Node Bootstrap Token
+[bootstrap-token] configured RBAC rules to allow certificate rotation for all node client certificates in the cluster
+[addons] Applied essential addon: CoreDNS
+[addons] Applied essential addon: kube-proxy
+
+[upgrade/successful] SUCCESS! Your cluster was upgraded to "v1.18.0". Enjoy!
+
+[upgrade/kubelet] Now that your control plane is upgraded, please proceed with upgrading your kubelets if you haven't already done so.
+```
+
+Restart kubelet
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart kubelet
+```
+
+Check versions
+```bash
+$ kubectl get nodes
+NAME                      STATUS   ROLES    AGE   VERSION
+k8smaster01.example.com   Ready    master   49m   v1.18.0
+k8sworker01.example.com   Ready    <none>   23m   v1.17.4
+k8sworker02.example.com   Ready    <none>   21m   v1.17.4
+k8sworker03.example.com   Ready    <none>   20m   v1.17.4
+```
+
+Upgrade workers
+
+Install kubeadm on worker-node
+```bash
+yum install -y kubeadm-1.18.0-0 --disableexcludes=kubernetes
+```
+
+Drain node
+```bash
+kubectl drain k8sworker01.example.com --ignore-daemonsets
+```
+
+Run upgrade on worker
+```bash
+$ sudo kubeadm upgrade node
+[upgrade] Reading configuration from the cluster...
+[upgrade] FYI: You can look at this config file with 'kubectl -n kube-system get cm kubeadm-config -oyaml'
+[upgrade] Skipping phase. Not a control plane node.
+[kubelet-start] Downloading configuration for the kubelet from the "kubelet-config-1.18" ConfigMap in the kube-system namespace
+[kubelet-start] Writing kubelet configuration to file "/var/lib/kubelet/config.yaml"
+[upgrade] The configuration for this node was successfully updated!
+[upgrade] Now you should go ahead and upgrade the kubelet package using your package manager.
+```
+
+Upgrade kubelet and kubectl on worker
+```bash
+yum install -y kubelet-1.18.0-0 kubectl-1.18.0-0 --disableexcludes=kubernetes
+```
+
+Restart the kubelet on worker
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart kubelet
+```
+
+Uncordon the node
+```bash
+kubectl uncordon k8sworker01.example.com
+```
+
+Verify the status of the cluster
+```bash
+$ kubectl get nodes
+NAME                      STATUS   ROLES    AGE   VERSION
+k8smaster01.example.com   Ready    master   56m   v1.18.0
+k8sworker01.example.com   Ready    <none>   30m   v1.18.0
+k8sworker02.example.com   Ready    <none>   28m   v1.17.4
+k8sworker03.example.com   Ready    <none>   28m   v1.17.4
+```
+
+Do the same on other workers.
+
+Final check
+```bash
+$ kubectl get nodes
+NAME                      STATUS   ROLES    AGE   VERSION
+k8smaster01.example.com   Ready    master   62m   v1.18.0
+k8sworker01.example.com   Ready    <none>   35m   v1.18.0
+k8sworker02.example.com   Ready    <none>   34m   v1.18.0
+k8sworker03.example.com   Ready    <none>   33m   v1.18.0
+```
+
+**Kubespray**
+
+Recreate our virtual machines.
+
+Example inventory for 3 masters and 3 workers
+```bash
+# ## Configure 'ip' variable to bind kubernetes services on a
+# ## different ip than the default iface
+# ## We should set etcd_member_name for etcd cluster. The node that is not a etcd member do not need to set the value, or can set the empty string value.
+[all]
+k8smaster01.example.com ansible_host=192.168.122.160  etcd_member_name=etcd1
+k8smaster02.example.com ansible_host=192.168.122.161  etcd_member_name=etcd2
+k8smaster03.example.comansible_host=192.168.122.162  etcd_member_name=etcd3
+k8sworker01.example.com ansible_host=192.168.122.163
+k8sworker02.example.com ansible_host=192.168.122.164
+
+
+# ## configure a bastion host if your nodes are not directly reachable
+# bastion ansible_host=x.x.x.x ansible_user=some_user
+
+[kube-master]
+k8smaster01.example.com
+k8smaster02.example.com
+k8smaster03.example.com
+
+[etcd]
+k8smaster01.example.com
+k8smaster02.example.com
+k8smaster03.example.com
+
+[kube-node]
+k8sworker01.example.com
+k8sworker02.example.com
+
+[calico-rr]
+
+[k8s-cluster:children]
+kube-master
+kube-node
+calico-rr
+```
+
+Our cluster
+```bash
+$ kubectl get nodes
+NAME                      STATUS   ROLES    AGE   VERSION
+k8smaster01.example.com   Ready    master   30m   v1.18.6
+k8smaster02.example.com   Ready    master   32m   v1.18.6
+k8smaster03.example.com   Ready    master   32m   v1.18.6
+k8sworker01.example.com   Ready    <none>   35m   v1.18.6
+k8sworker02.example.com   Ready    <none>   35m   v1.18.6
+```
+
 # Выполнено ДЗ №13
 # Kubernetes Debug
 
